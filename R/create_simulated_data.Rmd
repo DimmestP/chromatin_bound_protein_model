@@ -1,0 +1,158 @@
+---
+title: "Chromatin bound protein model simulated data"
+author: "Sam Haynes"
+date: "2023-03-15"
+output: html_document
+---
+
+# Overview
+
+The overall picture is that, we have chromatin-enriched samples MS-level protein intensities. But because each sample has been enriched to a different degree, some abundance reflect both the behavior of that protein (more or less abundant in a cell line) but also the technical preparation of that cell line ( more or less  chromatin-enriched).
+ 
+So the whole attempt of the model is to determine how well each sample is prepared (chromatin-enriched) to then figure out if a protein in more abundant in that cell line. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(here)
+library(rstan)
+
+real_protein_dataset <- readRDS(here("data/real_data_list.rds"))
+```
+
+# Creating simulated data
+The simulated dataset will consist of the MS-level protein intensities of 20 proteins taken from a chromatin enriched sample and a cytoplasmic sample for 50 cell lines with two biological replicates.
+
+```{r create-original-simulated-dataset}
+n_prot = 20 
+n_cell_lines = 50
+n_reps = 2
+n_samples = n_cell_lines * n_reps
+
+perc_chrom = rbeta(n_samples,2.5,2.5) # generates chromatin enrichment of 100 samples (1 = all chromatin, 0 = no chromatin)
+
+cell_types = rep(c(1:n_cell_lines), times = n_reps) #two replicates of each cell line
+
+Total_prot = rnorm(n_prot,20,1) #total abundance of each protein (chrom+non-chrom)
+
+Prot_chrom = runif(n_prot, min = 5, max = 16) # general protein abundance in pure (hypothetical) chromatin samples
+
+final_df = tibble(perc_chrom = perc_chrom) 
+#making a chromatin and cytoplasm (non-chrom) matrix 
+#col = proteins, row = cell lines, 
+#if a protein is more chromatin only in a specific cell line, it will have a positive value in this matrix
+
+chrom_prot_cell_line = matrix(rep(0,n_cell_lines * n_prot), #making a 0 matrix with rows T of tissue and Col P of PRoteins
+                           nrow = n_cell_lines, ncol = n_prot)
+cyto_prot_cell_line = matrix(rep(0,n_cell_lines * n_prot), #making a 0 matrix with rows T of tissue and Col P of PRoteins
+                           nrow = n_cell_lines, ncol = n_prot)
+
+#making some proteins cell line specific
+chrom_prot_cell_line[1,1] = 4
+cyto_prot_cell_line[1,1] = -3
+chrom_prot_cell_line[1,20] = -2
+cyto_prot_cell_line[1,20] = 3
+
+
+#the cytoplasmic/non-chrom fraction of the protein is total-chrom
+Prot_cyto = Total_prot - Prot_chrom
+for(i in 1:length(Prot_chrom)){
+  Prot_id = glue::glue("Prot_{i}")
+  Pr_cyto = glue::glue("Pr_cyto_{i}")
+  Pr_nucl = glue::glue("Pr_nucl{i}")
+  test_dat = tibble(perc_chrom = perc_chrom)
+  test_dat_tmp = test_dat|>
+    mutate(
+      
+      !!Pr_nucl  := rnorm( n() , mean= Prot_chrom[i] +chrom_prot_cell_line[cell_types,i]  , sd=0.2 )
+      ,
+      !!Pr_cyto := rnorm( n(), mean=Prot_cyto[i] +cyto_prot_cell_line[cell_types,i]  , sd=0.2 )
+      ,
+      #the OBSERVED abundance of the protein in the sample, depends on how much that protein is on pure chromatin and what % of that sample is pure chromatin
+      !!Prot_id  := .data[[Pr_cyto]]*(1-perc_chrom)+ .data[[Pr_nucl]]*perc_chrom
+    )
+  final_df  = cbind(final_df,test_dat_tmp)
+}
+
+
+test_dat = dplyr::select(final_df, matches("Prot")) 
+```
+
+```{r sanity_check_original_simulation}
+
+```
+
+```{r create-sam-simulated-dataset}
+
+protein_abundance <- tibble(protein_id = 1:n_prot,
+                               total = rnorm(n_prot,20,1),
+                               chromatin = runif(n_prot,
+                                                        min = 5,
+                                                        max = 16),
+                               cyto = total - chromatin)
+
+protein_cell_line_preference <- tibble(protein_id = rep(1:n_prot,
+                                                        each = n_cell_lines),
+                                       cell_line = rep(1:n_cell_lines, 
+                                                      n_prot),
+                                       change_abund = rnorm(1000, 0, 1))
+
+sample_chromatin_enrichment <- tibble(cell_line = rep(1:n_cell_lines, 
+                                                      n_reps),
+                                      rep = rep(1:n_reps, 
+                                                each = n_cell_lines),
+                                      enrichment = rbeta(n_samples,4,2))
+# I think there should be a slight bias towards efficient enrichment
+
+sam_test_dataset <- tibble(protein_id = rep(1:20, 
+                                            each = n_samples),
+       rep = rep(rep(1:n_reps, 
+                     each = n_cell_lines), 
+                 n_prot),
+       cell_line = rep(rep(1:n_cell_lines,
+                           n_reps),
+                       n_prot)) |>
+  inner_join(protein_abundance) |>
+  inner_join(sample_chromatin_enrichment) |>
+  inner_join(protein_cell_line_preference) |>
+  group_by(protein_id, rep, cell_line) |>
+  mutate(
+    Pr_nucl = rnorm(1,
+                     mean = chromatin + change_abund,
+                     sd = 0.2),
+    Pr_cyto = rnorm(1,
+                    mean= cyto - change_abund,
+                    sd=0.2),
+    Prot_id = Pr_cyto * (1-enrichment) + Pr_nucl * enrichment
+  )
+
+
+```
+
+```{r run-stan-model}
+#check stan is install3d
+
+model_orig <-  stan_model(here('R/hierarchical_model.stan'))
+
+
+# pass data to stan and run model
+options(mc.cores = 4)
+# init_fun <- function(...) list(b=0.1)
+input_enrichment = scale((final_df$perc_chrom*2.8) + 3) #in my actual experiment i don't have the true percentages, which I need to estimate
+# so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
+input_enrichment = input_enrichment[,1]
+matrix_input = test_dat
+fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
+                             proteins = n_prot,
+                             input_enrichment = input_enrichment,
+                             prot_intensity = matrix_input,
+                             replicates = n_reps), 
+                 iter = 1000, chains = 4
+                 # , init = init_fun
+)
+fit_real <- sampling(model_orig,
+                     real_data_list,
+                     iter = 1000,
+                     chains = 4)
+```
