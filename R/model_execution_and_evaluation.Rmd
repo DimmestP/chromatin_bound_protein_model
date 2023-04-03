@@ -50,6 +50,8 @@ fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
                  iter = 1000, chains = 4
                  # , init = init_fun
 )
+
+save(fit3, file=here("data/output/simulated_data_model_result"))
 ```
 
 ```{r run-stan-model-real, eval=FALSE}
