@@ -16,17 +16,19 @@ knitr::opts_chunk$set(echo = FALSE)
 
 library(tidyverse)
 library(here)
-library(rstan)
 
-real_protein_dataset <- readRDS(here("data/real_data_list.rds"))
+set.seed(324)
+
+real_protein_dataset <- readRDS(here("data/input/real_data_list.rds"))
+
 ```
 
 # Creating simulated data
 The simulated dataset will consist of the MS-level protein intensities of 20 proteins taken from a chromatin enriched sample and a cytoplasmic sample for 50 cell lines with two biological replicates.
 
 ```{r create-original-simulated-dataset}
-n_prot = 20 
-n_cell_lines = 50
+n_prot = 50
+n_cell_lines = 55
 n_reps = 2
 n_samples = n_cell_lines * n_reps
 
@@ -79,9 +81,35 @@ for(i in 1:length(Prot_chrom)){
 test_dat = dplyr::select(final_df, matches("Prot")) 
 ```
 
-```{r sanity_check_original_simulation}
+```{r sanity_check_simulated_data_savvas}
+# Check simulated distribution of enrichment by comparing to shifted observed enrichment
+input_enrichment_comparison_savvas <- tibble(simulated = rbeta(115,2.5,2.5),
+                                      observed = real_protein_dataset$input_enrichment) |>
+  mutate(observed = observed - min(observed),
+         observed = observed / max(observed)) |>
+  pivot_longer(cols=c("simulated", "observed"), names_to = "source", values_to = "enrichment")
+
+ggplot(input_enrichment_comparison_savvas) +
+  geom_histogram(aes(x=enrichment, fill = source),
+  position = "identity",
+  alpha = 0.8)
+
+# Check simulated protein intensities to real data. Shifted again as I am only interested in the rough shape.
+protein_intensities_comparison_savvas <- tibble(simulated = unlist(test_dat),
+                                                observed = sample(c(real_protein_dataset$prot_intensity), 50*55*2))  |> 
+  mutate(observed = observed - min(observed)) |>
+  mutate(simulated = simulated - min(simulated)) |>
+  pivot_longer(cols=c("simulated", "observed"), names_to = "source", values_to = "intensity")
+
+ggplot(protein_intensities_comparison_savvas) +
+  geom_histogram(aes(x=intensity, fill = source),
+  position = "identity",
+  alpha = 0.8)
 
 ```
+I think the current simulated enrichment method is a imperfect Basically you've assumed that actively enriching a sample will have no effect at all on average. I think there should be some bias towards samples being some what efficiently enriched.
+
+I think both simulated intensities need more variance. 
 
 ```{r create-sam-simulated-dataset}
 
@@ -92,20 +120,23 @@ protein_abundance <- tibble(protein_id = 1:n_prot,
                                                         max = 16),
                                cyto = total - chromatin)
 
+# Feel free to critique this but instead of hand picking some proteins in some cell lines I've just said all proteins have some sort of bias in every cell line. Most are negligible though! 
+
 protein_cell_line_preference <- tibble(protein_id = rep(1:n_prot,
                                                         each = n_cell_lines),
                                        cell_line = rep(1:n_cell_lines, 
                                                       n_prot),
-                                       change_abund = rnorm(1000, 0, 1))
+                                       change_abund = rnorm(n_prot*n_cell_lines, 0, 1))
+
+# I think there should be a slight bias towards efficient enrichment
 
 sample_chromatin_enrichment <- tibble(cell_line = rep(1:n_cell_lines, 
                                                       n_reps),
                                       rep = rep(1:n_reps, 
                                                 each = n_cell_lines),
                                       enrichment = rbeta(n_samples,4,2))
-# I think there should be a slight bias towards efficient enrichment
 
-sam_test_dataset <- tibble(protein_id = rep(1:20, 
+sam_test_dataset <- tibble(protein_id = rep(1:n_prot, 
                                             each = n_samples),
        rep = rep(rep(1:n_reps, 
                      each = n_cell_lines), 
@@ -120,39 +151,126 @@ sam_test_dataset <- tibble(protein_id = rep(1:20,
   mutate(
     Pr_nucl = rnorm(1,
                      mean = chromatin + change_abund,
-                     sd = 0.2),
+                     sd = 1),
     Pr_cyto = rnorm(1,
                     mean= cyto - change_abund,
-                    sd=0.2),
-    Prot_id = Pr_cyto * (1-enrichment) + Pr_nucl * enrichment
+                    sd = 1),
+    prot_int = Pr_cyto * (1-enrichment) + Pr_nucl * enrichment
   )
 
 
 ```
 
-```{r run-stan-model}
-#check stan is install3d
+```{r sanity_check_simulated_data_sam}
+# Check simulated distribution of enrichment by comparing to shifted observed enrichment
+input_enrichment_comparison_sam <- tibble(simulated = sample_chromatin_enrichment$enrichment,
+                                      observed = sample(real_protein_dataset$input_enrichment, n_reps*n_cell_lines)) |>
+  mutate(observed = observed - min(observed),
+         observed = observed / max(observed)) |>
+  pivot_longer(cols=c("simulated", "observed"), names_to = "source", values_to = "enrichment")
 
-model_orig <-  stan_model(here('R/hierarchical_model.stan'))
+ggplot(input_enrichment_comparison_sam) +
+  geom_histogram(aes(x=enrichment, fill = source),
+  position = "identity",
+  alpha = 0.8)
 
+# Check simulated protein intensities to real data. Shifted again as I am only interested in the rough shape.
+protein_intensities_comparison_sam <- tibble(simulated = sam_test_dataset$prot_int,
+                                                observed = sample(c(real_protein_dataset$prot_intensity), 50*55*2))  |> 
+  mutate(observed = observed - min(observed)) |>
+  mutate(simulated = simulated - min(simulated)) |>
+  pivot_longer(cols=c("simulated", "observed"), names_to = "source", values_to = "intensity")
 
-# pass data to stan and run model
-options(mc.cores = 4)
-# init_fun <- function(...) list(b=0.1)
-input_enrichment = scale((final_df$perc_chrom*2.8) + 3) #in my actual experiment i don't have the true percentages, which I need to estimate
-# so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
-input_enrichment = input_enrichment[,1]
-matrix_input = test_dat
-fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
-                             proteins = n_prot,
-                             input_enrichment = input_enrichment,
-                             prot_intensity = matrix_input,
-                             replicates = n_reps), 
-                 iter = 1000, chains = 4
-                 # , init = init_fun
-)
-fit_real <- sampling(model_orig,
-                     real_data_list,
-                     iter = 1000,
-                     chains = 4)
+ggplot(protein_intensities_comparison_sam) +
+  geom_histogram(aes(x=intensity, fill = source),
+  position = "identity",
+  alpha = 0.8)
+
+```
+
+```{r create-simple-simulated-dataset}
+n_prot = 20 
+n_cell_lines = 50
+n_reps = 2
+n_samples = n_cell_lines * n_reps
+
+protein_abundance_simple <- tibble(protein_id = 1:n_prot,
+                               total = rnorm(n_prot,20,1),
+                               chromatin = runif(n_prot,
+                                                        min = 5,
+                                                        max = 16),
+                               cyto = total - chromatin)
+
+# Feel free to critique this but instead of hand picking some proteins in some cell lines I've just said all proteins have some sort of bias in every cell line. Most are negligible though! 
+
+protein_cell_line_preference_simple <- tibble(protein_id = rep(1:n_prot,
+                                                        each = n_cell_lines),
+                                       cell_line = rep(1:n_cell_lines, 
+                                                      n_prot),
+                                       change_abund = rnorm(n_prot*n_cell_lines, 0, 1))
+
+# I think there should be a slight bias towards efficient enrichment
+
+sample_chromatin_enrichment_simple <- tibble(cell_line = rep(1:n_cell_lines, 
+                                                      n_reps),
+                                      rep = rep(1:n_reps, 
+                                                each = n_cell_lines),
+                                      enrichment = rbeta(n_samples,4,2))
+
+sam_test_dataset_simple <- tibble(protein_id = rep(1:n_prot, 
+                                            each = n_samples),
+       rep = rep(rep(1:n_reps, 
+                     each = n_cell_lines), 
+                 n_prot),
+       cell_line = rep(rep(1:n_cell_lines,
+                           n_reps),
+                       n_prot)) |>
+  inner_join(protein_abundance_simple) |>
+  inner_join(sample_chromatin_enrichment_simple) |>
+  inner_join(protein_cell_line_preference_simple) |>
+  group_by(protein_id, rep, cell_line) |>
+  mutate(
+    Pr_nucl = rnorm(1,
+                     mean = chromatin + change_abund,
+                     sd = 1),
+    Pr_cyto = rnorm(1,
+                    mean= cyto - change_abund,
+                    sd = 1),
+    prot_int = Pr_cyto * (1-enrichment) + Pr_nucl * enrichment
+  )
+```
+
+```{r output-simulated-data}
+write_csv(sam_test_dataset_simple,
+          here("data/output/simulated_dataset.csv"))
+```
+
+```{r output-observed-data}
+# Real data set is imbalanced. Recommend randomly selecting 2 of the 7 samples for cell line 7. Don't lose too much data and avoids over emphasis on protein behaviour in this cell line. Alternatives require more complex statistics! 
+
+tibble(cell_line = real_protein_dataset$cell_line) |> 
+  group_by(cell_line) |> 
+  summarise(count = n()) |>
+  arrange(desc(count))
+
+resampled_real_dataset <- tibble(sample = rep(1:115, 50),
+       cell_line = rep(real_protein_dataset$cell_line, 50),
+       input_enrichment = rep(real_protein_dataset$input_enrichment, 50),
+       protein = rep(1:50, each = 115),
+       prot_intensity = c(real_protein_dataset$prot_intensity)) |>
+  group_by(cell_line) |>
+  filter(sample %in% sample(unique(sample), 2)) |>
+  arrange(protein, cell_line) |>
+  ungroup()
+
+real_protein_dataset$N <- 110
+
+real_protein_dataset$prot_intensity <- resampled_real_dataset$prot_intensity |>
+  matrix(nrow = 110)
+
+real_protein_dataset$input_enrichment <- resampled_real_dataset$input_enrichment[1:110]
+
+real_protein_dataset$cell_line <- resampled_real_dataset$cell_line[1:110]
+
+saveRDS(real_protein_dataset, here("data/output/subsampled_real_data_list.rds"))
 ```

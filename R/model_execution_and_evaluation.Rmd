@@ -1,0 +1,60 @@
+---
+title: "Model Execution and Evaluation"
+author: "Sam Haynes"
+date: "2023-04-03"
+output: html_document
+---
+
+```{r setup}
+library(tidyverse)
+library(here)
+library(rstan)
+
+subsampled_real_data_list <- readRDS(here("data/output/subsampled_real_data_list.rds"))
+
+sam_test_dataset_simple <- read_csv(here("data/output/simulated_dataset.csv"))
+
+n_reps <-  sam_test_dataset_simple$rep |> max()
+
+n_prot <-  sam_test_dataset_simple$protein_id |> max()
+
+n_cell_lines <-  sam_test_dataset_simple$cell_line |> max()
+```
+
+```{r run-stan-model-simulated}
+#check stan is installed
+model_orig <-  stan_model(here('R/hierarchical_model.stan'))
+
+
+# pass data to stan and run model
+options(mc.cores = 4)
+
+input_enrichment = sam_test_dataset_simple |>
+  group_by(cell_line)|>
+  arrange(cell_line) |>
+  summarise(enrichment = enrichment[1] * 2.8 + 3) |>
+  pull(enrichment) |>
+  array(dim = c(n_reps, n_cell_lines))
+#in my actual experiment i don't have the true percentages, which I need to estimate
+# so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
+matrix_input = sam_test_dataset_simple |>
+  arrange(protein_id, cell_line) |>
+  pull(prot_int) |>
+  array(dim = c(n_reps, n_cell_lines, n_prot))
+  
+fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
+                             proteins = n_prot,
+                             input_enrichment = input_enrichment,
+                             prot_intensity = matrix_input,
+                             replicates = n_reps), 
+                 iter = 1000, chains = 4
+                 # , init = init_fun
+)
+```
+
+```{r run-stan-model-real, eval=FALSE}
+fit_real <- sampling(model_orig,
+                     real_data_list,
+                     iter = 1000,
+                     chains = 4)
+```
