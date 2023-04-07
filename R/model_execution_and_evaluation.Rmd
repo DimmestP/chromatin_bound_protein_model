@@ -8,6 +8,7 @@ output: html_document
 ```{r setup}
 library(tidyverse)
 library(here)
+library(tidybayes)
 library(rstan)
 
 subsampled_real_data_list <- readRDS(here("data/output/subsampled_real_data_list.rds"))
@@ -53,6 +54,24 @@ fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
 
 save(fit3, file=here("data/output/simulated_data_model_result"))
 ```
+
+```{r explore-posterior}
+fit_summary <- summary(fit)$summary |> 
+  as_tibble(rownames = "parameter") |>
+  transmute(parameter,
+            median = `50%`)
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "enrichment_est")) |>
+         mutate(rep = rep(1:2, 50),
+                cell_line = rep(1:50, 2)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(rep,cell_line) |> 
+                      summarise(enrichment = unique(enrichment)))) +
+  geom_point(aes(x=median, y=enrichment))
+
+```
+Really don't think a logit function is a particularly great idea. Especially if the relationship is mostly linear.
 
 ```{r run-stan-model-real, eval=FALSE}
 fit_real <- sampling(model_orig,
