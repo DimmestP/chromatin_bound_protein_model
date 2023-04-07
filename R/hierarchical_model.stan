@@ -7,8 +7,10 @@ data {
   }
   
 parameters {
-  real<lower=0>  b; 
-  real  a;
+  real  poly_a; 
+  real  poly_b;
+  real  poly_c; 
+  real  poly_d;
   vector[cell_lines] noiseless_input_enrichment[replicates];
   vector<lower=0,upper=1>[cell_lines] enrichment[replicates];
   
@@ -34,11 +36,9 @@ transformed parameters{
    
   chromatin_fraction = chrom ./ (cyto+chrom); // as chrom and cyto are vectors you can do vector addition and division to remove for loop
   
-  for(r in 1:replicates) {
-    enrichment_est[r] = inv_logit(a + b * noiseless_input_enrichment[r]); // the way to use stan's inbuilt sigmoid function
-  }
   for(r in 1:replicates){
     for(c in 1:cell_lines){
+      enrichment_est[r,c] = poly_a + poly_b * noiseless_input_enrichment[r,c] + poly_c * noiseless_input_enrichment[r,c]^2 + poly_d * noiseless_input_enrichment[r,c]^3; // the way to use stan's inbuilt sigmoid function
       prot_intensity_est[r,c,] = enrichment[r,c]*chrom_C[c,]+
         (1-enrichment[r,c])*cyto_C[c,];
     }
@@ -47,8 +47,11 @@ transformed parameters{
 
 
 model {
-  a ~ normal(0,1);
-  b ~ normal(2,1);
+  poly_a ~ normal(0,1);
+  poly_b ~ normal(0,0.1);
+  poly_c ~ normal(0,0.1);
+  poly_d ~ normal(0,0.1);
+  
   // chromatin_fraction ~ beta(2.5, 2.5); removed for same issue with enrichment
   sigma ~ cauchy(1,1); // generally should define priors for all variables
   chrom ~ normal(20,4) ; 
