@@ -56,7 +56,7 @@ save(fit3, file=here("data/output/simulated_data_model_result"))
 ```
 
 ```{r explore-posterior}
-fit_summary <- summary(fit)$summary |> 
+fit_summary <- summary(fit3)$summary |> 
   as_tibble(rownames = "parameter") |>
   transmute(parameter,
             median = `50%`)

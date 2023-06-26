@@ -17,6 +17,7 @@ parameters {
   
   
   real<lower=0> sigma;
+  real<lower=0> sigma_enrich;
   vector<lower=0>[proteins] chrom; 
   vector<lower=0>[proteins] cyto;
   
@@ -47,15 +48,16 @@ transformed parameters{
 
 
 model {
-  poly_a ~ normal(0,1);
-  poly_b ~ normal(0,0.1);
-  poly_c ~ normal(0,0.1);
-  poly_d ~ normal(0,0.1);
+  poly_a ~ double_exponential(0,0.1);
+  poly_b ~ double_exponential(1,0.1);
+  poly_c ~ double_exponential(0,0.05);
+  poly_d ~ double_exponential(0,0.05);
   
   // chromatin_fraction ~ beta(2.5, 2.5); removed for same issue with enrichment
   sigma ~ cauchy(1,1); // generally should define priors for all variables
   chrom ~ normal(20,4) ; 
   cyto ~ normal(20,4) ; 
+  sigma_enrich ~ exponential(1); // generally should define priors for all variables
   
   for(C in 1:cell_lines){ 
     // remove nested for loop by calls cols of matrix
@@ -65,7 +67,7 @@ model {
   }
 
   for(r in 1:replicates){
-    noiseless_input_enrichment[r] ~ normal(input_enrichment[r], 1); // all input data should be assumed to have noise!
+    noiseless_input_enrichment[r] ~ normal(input_enrichment[r], sigma_enrich); // all input data should be assumed to have noise!
     enrichment[r] ~ normal(enrichment_est[r], 0.1); 
 
     for(p in 1:proteins){ 
