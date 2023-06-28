@@ -13,6 +13,8 @@ library(rstan)
 
 subsampled_real_data_list <- readRDS(here("data/output/subsampled_real_data_list.rds"))
 
+real_data_list <- read_rds(here("data/input/real_data_list.rds"))
+
 sam_test_dataset_simple <- read_csv(here("data/output/simulated_dataset.csv"))
 
 n_reps <-  sam_test_dataset_simple$rep |> max()
@@ -36,6 +38,7 @@ input_enrichment = sam_test_dataset_simple |>
   summarise(enrichment = enrichment[1] * 2.8 + 3) |>
   pull(enrichment) |>
   array(dim = c(n_reps, n_cell_lines))
+
 #in my actual experiment i don't have the true percentages, which I need to estimate
 # so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
 matrix_input = sam_test_dataset_simple |>
@@ -52,7 +55,7 @@ fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
                  # , init = init_fun
 )
 
-save(fit3, file=here("data/output/simulated_data_model_result"))
+# save(fit3, file=here("data/output/simulated_data_model_result"))
 ```
 
 ```{r explore-posterior}
@@ -62,20 +65,127 @@ fit_summary <- summary(fit3)$summary |>
             median = `50%`)
 
 ggplot(fit_summary |> 
-         filter(str_detect(parameter, "enrichment_est")) |>
-         mutate(rep = rep(1:2, 50),
+         filter(str_detect(parameter, "enrichment")) |>
+         mutate(rep = rep(1:2, each = 50),
                 cell_line = rep(1:50, 2)) |>
          inner_join(sam_test_dataset_simple |> 
                       group_by(rep,cell_line) |> 
                       summarise(enrichment = unique(enrichment)))) +
-  geom_point(aes(x=median, y=enrichment))
+  geom_point(aes(x= median, y=enrichment)) +
+  labs(x="Enrichment")
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "chrom_C")) |>
+         mutate(protein_id = rep(1:20, 50),
+                cell_line = rep(1:50, each = 20)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id,cell_line) |> 
+                      summarise(Pr_cyto = mean(Pr_cyto)))) +
+  geom_point(aes(x=median, y=Pr_cyto))  +
+  labs(x="chrom_C")
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "cyto_C")) |>
+         mutate(protein_id = rep(1:20, 50),
+                cell_line = rep(1:50, each = 20)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id,cell_line) |> 
+                      summarise(Pr_nucl = mean(Pr_nucl)))) +
+  geom_point(aes(x=median, y=Pr_nucl))  +
+  labs(x="cyto_C")
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "cyto_C")) |>
+         mutate(protein_id = rep(1:20, 50),
+                cell_line = rep(1:50, each = 20)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id,cell_line) |> 
+                      summarise(Pr_nucl = mean(Pr_nucl)))) +
+  geom_point(aes(x=median, y=Pr_nucl))  +
+  labs(x="cyto_C")
+
+ggplot(fit3 |> 
+         extract("gen_prot_intensity") |>
+         as_tibble() |>
+         mutate(gen_prot_intensity=c(apply(gen_prot_intensity,c(2,3,4),median))) |>
+         mutate(rep = rep(1:2, 1000),
+                cell_line = rep(rep(1:50, each = 2), 20),
+                protein_id = rep(1:20, each = 100)) |>
+         inner_join(sam_test_dataset_simple)) +
+  geom_point(aes(x = gen_prot_intensity, y = prot_int))  +
+  labs(x="gen_prot_intensity")
+
+mock_post_posterior_check <- fit_summary |> 
+  filter(str_detect(parameter, "cyto_C")) |>
+  transmute(cyto = median) |>
+  bind_cols(fit_summary |> 
+  filter(str_detect(parameter, "m_C")) |>
+  transmute(chrom = median)) |>
+  mutate(cell_line = rep(1:50, each = 20),
+         protein = rep(1:20, 50))
+
+ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
+  geom_point(aes(x=cyto, y=chrom)) +
+  facet_wrap(~cell_line, ncol = 6)
+
+ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
+  geom_point(aes(x=cyto, y=chrom)) +
+  facet_wrap(~protein, ncol = 6, scales = "free")
 
 ```
+
+```{r run-stanfit, eval=FALSE}
+launch_shinystan(fit3)
+```
+
 Really don't think a logit function is a particularly great idea. Especially if the relationship is mostly linear.
 
 ```{r run-stan-model-real, eval=FALSE}
 fit_real <- sampling(model_orig,
-                     real_data_list,
+                     list(cell_lines = subsampled_real_data_list$cell_lines,
+                             proteins = subsampled_real_data_list$P,
+                             input_enrichment = subsampled_real_data_list$input_enrichment,
+                             prot_intensity = array(c(subsampled_real_data_list$prot_intensity), dim = c(2,55,50)),
+                             replicates = n_reps),
                      iter = 1000,
                      chains = 4)
+
+```
+
+```{r explore-posterior}
+fit_summary_real <- summary(fit_real)$summary |> 
+  as_tibble(rownames = "parameter") |>
+  transmute(parameter,
+            median = `50%`)
+
+ggplot(fit_summary_real |> 
+         filter(str_detect(parameter, "enrichment")) |>
+         mutate(rep = rep(1:2, each = 55),
+                cell_line = rep(1:55, 2)) |>
+         inner_join(tibble(input_enrichment = subsampled_real_data_list$input_enrichment,
+                           cell_line = subsampled_real_data_list$cell_line,
+                           rep = rep(c(1,2), 55)))) +
+  geom_point(aes(x= median, y=input_enrichment)) +
+  labs(x="Enrichment")
+
+ggplot( tibble(gen_prot_intensity=c(apply(extract(fit_real,"gen_prot_intensity")$gen_prot_intensity,c(2,3,4),median))) |>
+         mutate(rep = rep(1:2, 50*55),
+                cell_line = rep(rep(1:55, each = 2), 50),
+                protein_id = rep(1:50, each = 110)) |>
+         inner_join(sam_test_dataset_simple)) +
+  geom_point(aes(x = gen_prot_intensity, y = prot_int))  +
+  labs(x="gen_prot_intensity")
+
+real_post_posterior_check <- fit_summary_real |> 
+  filter(str_detect(parameter, "cyto_C")) |>
+  transmute(cyto = median) |>
+  bind_cols(fit_summary_real |> 
+  filter(str_detect(parameter, "m_C")) |>
+  transmute(chrom = median)) |>
+  mutate(cell_line = rep(1:55, each = 50),
+         protein = rep(1:50, 55))
+
+ggplot(real_post_posterior_check |> filter(cell_line < 21)) +
+  geom_point(aes(x=cyto, y=chrom)) +
+  facet_wrap(~cell_line, ncol = 6)
 ```
