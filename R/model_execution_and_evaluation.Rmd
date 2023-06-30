@@ -28,7 +28,6 @@ n_cell_lines <-  sam_test_dataset_simple$cell_line |> max()
 #check stan is installed
 model_orig <-  stan_model(here('R/hierarchical_model.stan'))
 
-
 # pass data to stan and run model
 options(mc.cores = 4)
 ```
@@ -155,14 +154,29 @@ subset_perfect_protein_names <- perfect_real_data_set |>
 subset_perfect_data <- perfect_real_data_set |> 
   filter(ProteinGroup %in% subset_perfect_protein_names)
 
-n_cell_lines <- max(subset_perfect_data$cell_line)
+n_cell_lines <- 11
+
+n_tissues <- 2
+
+protein_intensity_array_real_data <- array(c(subset_perfect_data |>
+  filter(tissue_name %in% c("lung", "breast")) |>
+  arrange(ProteinGroup,
+          tissue, 
+          rep,
+          cell_line) |>
+  pull(prot_intensity)),
+  dim = c(n_cell_lines,
+          n_reps,
+          n_tissues,
+          n_prot
+          )) |>
+  aperm(c(2,3,1,4))
 
 fit_real <- sampling(model_orig,
                      list(cell_lines = n_cell_lines,
                              proteins = n_prot,
-                             prot_intensity = array(c(subset_perfect_data|>
-                                                        arrange(ProteinGroup, rep, n_cell_lines) |>
-                                                        pull(prot_intensity)), dim = c(n_reps,n_cell_lines,n_prot)),
+                             tissues = n_tissues,
+                             prot_intensity = protein_intensity_array_real_data,
                              replicates = n_reps),
                      iter = 1000,
                      chains = 4)
@@ -177,6 +191,21 @@ fit_summary_real <- summary(fit_real)$summary |>
   transmute(parameter,
             median = `50%`)
 
+subset_perfect_data_sorted <- subset_perfect_data |>
+    filter(tissue_name %in% c("lung", "breast")) |>
+    arrange(ProteinGroup,
+            tissue, 
+            rep,
+            cell_line) |> 
+  group_by(ProteinGroup,
+           tissue, 
+           rep) |> 
+  mutate(cell_line = 1:11,
+         ProteinGroup = factor(ProteinGroup),
+         protein_id = unclass(ProteinGroup),
+         tissue_name = factor(tissue_name),
+         tissue = unclass(tissue_name))
+
 #ggplot(fit_summary_real |> 
 #         filter(str_detect(parameter, "enrichment")) |>
 #         mutate(rep = rep(1:n_reps, each = n_cell_lines),
@@ -187,11 +216,12 @@ fit_summary_real <- summary(fit_real)$summary |>
 #  geom_point(aes(x= median, y=input_enrichment)) +
 #  labs(x="Enrichment")
 
-ggplot( tibble(gen_prot_intensity=c(apply(extract(fit_real,"gen_prot_intensity")$gen_prot_intensity,c(2,3,4),median))) |>
-         mutate(rep = rep(1:n_reps, n_cell_lines*n_prot),
-                cell_line = rep(rep(1:n_cell_lines, each = n_reps), n_prot),
-                protein_id = rep(1:n_prot, each = n_cell_lines*n_reps)) |>
-         inner_join(subset_perfect_data)) +
+ggplot( tibble(gen_prot_intensity=c(apply(extract(fit_real,"gen_prot_intensity")$gen_prot_intensity,c(2,3,4,5),median))) |>
+         mutate(rep = rep(1:n_reps, n_cell_lines*n_prot*n_tissues),
+                tissue = rep(rep(1:n_tissues,each = n_reps), n_prot*n_cell_lines),
+                cell_line = rep(rep(1:n_cell_lines, each = n_reps*n_tissues), n_prot),
+                protein_id = rep(1:n_prot, each = n_cell_lines*n_reps*n_tissues)) |>
+         inner_join(subset_perfect_data_sorted)) +
   geom_point(aes(x = gen_prot_intensity, y = prot_intensity))  +
   labs(x="gen_prot_intensity")
 
@@ -201,10 +231,10 @@ real_post_posterior_check <- fit_summary_real |>
   bind_cols(fit_summary_real |> 
   filter(str_detect(parameter, "m_C")) |>
   transmute(chrom = median)) |>
-  mutate(cell_line = rep(1:n_cell_lines, each = n_prot),
-         protein = rep(1:n_prot, n_cell_lines))
+  mutate(cell_line = rep(rep(1:n_cell_lines, each = n_prot), n_tissues),
+         protein = rep(1:n_prot, n_cell_lines * n_tissues))
 
 ggplot(real_post_posterior_check |> filter(cell_line < 21)) +
-  geom_point(aes(x=cyto, y=chrom)) +
-  facet_wrap(~cell_line, ncol = 6)
+  geom_point(aes(x=log(cyto), y=log(chrom))) +
+  facet_wrap(~cell_line, ncol = 6, scales = "free")
 ```
