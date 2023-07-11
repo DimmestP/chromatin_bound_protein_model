@@ -8,25 +8,19 @@ data {
   
 parameters {
   vector<lower=0,upper=1>[cell_lines] enrichment[replicates,tissues];
-  real<lower=0>sample_scale_factor[replicates,tissues,cell_lines];
-  
-  
   
   real<lower=0> sigma;
   real<lower=0> sigma_enrich;
   real<lower=0> mu_enrich;
   //vector<lower=0>[proteins] mu_chrom[tissues]; 
   //vector<lower=0>[proteins] mu_cyto[tissues]; 
- real<lower=0> mu_tissue[tissues];
+  real<lower=0> mu_tissue[tissues];
   real<lower=0> mu_cell_line[tissues,cell_lines];
   real<lower=0> cyto_extra[tissues,cell_lines];
     
   // swapped dimensions to allow for easy vector addition (protein number is always column number of matrix)
   matrix<lower=0>[cell_lines,proteins] chrom_C[tissues]; 
   matrix<lower=0>[cell_lines,proteins] cyto_C[tissues];
-  
- 
- 
   }
 
 transformed parameters{
@@ -35,8 +29,8 @@ transformed parameters{
   for(r in 1:replicates){
     for(c in 1:cell_lines){
       for(t in 1:tissues){
-        prot_intensity_est[r,t,c,] = sample_scale_factor[r,t,c]*(enrichment[r,t,c]*chrom_C[t,c,] + 
-        (1-enrichment[r,t,c])*cyto_C[t,c,]);
+        prot_intensity_est[r,t,c,] = enrichment[r,t,c]*chrom_C[t,c,] + 
+        (1-enrichment[r,t,c])*cyto_C[t,c,];
       }
     }
   }
@@ -68,7 +62,6 @@ model {
   for(r in 1:replicates){
     for(t in 1:tissues){
       enrichment[r,t] ~ normal(mu_enrich, sigma_enrich);
-      sample_scale_factor[r,t] ~ normal(1, 0.1);
 
       for(p in 1:proteins){ 
         // generally discouraged to have complex maths in call to sample from distribution
