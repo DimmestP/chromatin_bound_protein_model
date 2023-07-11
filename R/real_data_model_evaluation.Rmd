@@ -11,13 +11,7 @@ library(here)
 library(tidybayes)
 library(rstan)
 
-subsampled_real_data_list <- readRDS(here("data/output/subsampled_real_data_list.rds"))
-
-real_data_list <- read_rds(here("data/input/real_data_list.rds"))
-
 perfect_real_data_set <- read_rds(here("data/output/perfect_real_data_set.rds"))
-
-sam_test_dataset_simple <- read_csv(here("data/output/simulated_dataset.csv"))
 
 test_enrichment <- read_csv(here("data/input/enrichment_plot_rep_sum_piv.csv")) |>
   arrange(desc(N)) |>
@@ -25,12 +19,6 @@ test_enrichment <- read_csv(here("data/input/enrichment_plot_rep_sum_piv.csv")) 
   separate(sample, sep ="_(?=[1-9]$)", into = c("cell_line_name", "rep_name")) |>
   mutate(tissue_name = factor(tissue_name),
          cell_line_name = factor(cell_line_name))
-
-n_reps <-  sam_test_dataset_simple$rep |> max()
-
-n_prot <-  sam_test_dataset_simple$protein_id |> max()
-
-n_cell_lines <-  sam_test_dataset_simple$cell_line |> max()
 
 #check stan is installed
 model_orig <-  stan_model(here('R/hierarchical_model.stan'))
@@ -55,119 +43,10 @@ perfect_real_data_set_normalised = perfect_real_data_set |>
   mutate(prot_intensity = prot_intensity / sample_scale_factor)
 ```
 
-```{r run-stan-model-simulated}
-
-
-input_enrichment = sam_test_dataset_simple |>
-  group_by(cell_line)|>
-  arrange(cell_line) |>
-  summarise(enrichment = enrichment[1] * 2.8 + 3) |>
-  pull(enrichment) |>
-  array(dim = c(n_reps, n_cell_lines))
-
-#in my actual experiment i don't have the true percentages, which I need to estimate
-# so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
-matrix_input = sam_test_dataset_simple |>
-  arrange(protein_id, cell_line) |>
-  pull(prot_int) |>
-  array(dim = c(n_reps, n_cell_lines, n_prot))
-  
-fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
-                             proteins = n_prot,
-                             input_enrichment = input_enrichment,
-                             prot_intensity = matrix_input,
-                             replicates = n_reps), 
-                 iter = 1000, chains = 4
-                 # , init = init_fun
-)
-
-# save(fit3, file=here("data/output/simulated_data_model_result"))
-```
-
-```{r explore-posterior}
-fit_summary <- summary(fit3)$summary |> 
-  as_tibble(rownames = "parameter") |>
-  transmute(parameter,
-            median = `50%`)
-
-ggplot(fit_summary |> 
-         filter(str_detect(parameter, "enrichment")) |>
-         mutate(rep = rep(1:2, each = 50),
-                cell_line = rep(1:50, 2)) |>
-         inner_join(sam_test_dataset_simple |> 
-                      group_by(rep,cell_line) |> 
-                      summarise(enrichment = unique(enrichment)))) +
-  geom_point(aes(x= median, y=enrichment)) +
-  labs(x="Enrichment")
-
-ggplot(fit_summary |> 
-         filter(str_detect(parameter, "chrom_C")) |>
-         mutate(protein_id = rep(1:20, 50),
-                cell_line = rep(1:50, each = 20)) |>
-         inner_join(sam_test_dataset_simple |> 
-                      group_by(protein_id,cell_line) |> 
-                      summarise(Pr_cyto = mean(Pr_cyto)))) +
-  geom_point(aes(x=median, y=Pr_cyto))  +
-  labs(x="chrom_C")
-
-ggplot(fit_summary |> 
-         filter(str_detect(parameter, "cyto_C")) |>
-         mutate(protein_id = rep(1:20, 50),
-                cell_line = rep(1:50, each = 20)) |>
-         inner_join(sam_test_dataset_simple |> 
-                      group_by(protein_id,cell_line) |> 
-                      summarise(Pr_nucl = mean(Pr_nucl)))) +
-  geom_point(aes(x=median, y=Pr_nucl))  +
-  labs(x="cyto_C")
-
-ggplot(fit_summary |> 
-         filter(str_detect(parameter, "cyto_C")) |>
-         mutate(protein_id = rep(1:20, 50),
-                cell_line = rep(1:50, each = 20)) |>
-         inner_join(sam_test_dataset_simple |> 
-                      group_by(protein_id,cell_line) |> 
-                      summarise(Pr_nucl = mean(Pr_nucl)))) +
-  geom_point(aes(x=median, y=Pr_nucl))  +
-  labs(x="cyto_C")
-
-ggplot(fit3 |> 
-         extract("gen_prot_intensity") |>
-         as_tibble() |>
-         mutate(gen_prot_intensity=c(apply(gen_prot_intensity,c(2,3,4),median))) |>
-         mutate(rep = rep(1:2, 1000),
-                cell_line = rep(rep(1:50, each = 2), 20),
-                protein_id = rep(1:20, each = 100)) |>
-         inner_join(sam_test_dataset_simple)) +
-  geom_point(aes(x = gen_prot_intensity, y = prot_int))  +
-  labs(x="gen_prot_intensity")
-
-mock_post_posterior_check <- fit_summary |> 
-  filter(str_detect(parameter, "cyto_C")) |>
-  transmute(cyto = median) |>
-  bind_cols(fit_summary |> 
-  filter(str_detect(parameter, "m_C")) |>
-  transmute(chrom = median)) |>
-  mutate(cell_line = rep(1:50, each = 20),
-         protein = rep(1:20, 50))
-
-ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
-  geom_point(aes(x=cyto, y=chrom)) +
-  facet_wrap(~cell_line, ncol = 6)
-
-ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
-  geom_point(aes(x=cyto, y=chrom)) +
-  facet_wrap(~protein, ncol = 6, scales = "free")
-
-```
-
-```{r run-stanfit, eval=FALSE}
-launch_shinystan(fit3)
-```
-
-Really don't think a logit function is a particularly great idea. Especially if the relationship is mostly linear.
-
 ```{r run-stan-model-real, eval=FALSE}
 n_prot <- 30
+
+n_reps <- 2
 
 subset_perfect_protein_names <- perfect_real_data_set_normalised |> 
   pull(ProteinGroup) |>
