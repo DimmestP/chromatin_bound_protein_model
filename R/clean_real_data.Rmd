@@ -1,0 +1,85 @@
+---
+title: "Chromatin bound protein model simulated data"
+author: "Sam Haynes"
+date: "2023-03-15"
+output: html_document
+---
+
+# Overview
+
+The overall picture is that, we have chromatin-enriched samples MS-level protein intensities. But because each sample has been enriched to a different degree, some abundance reflect both the behavior of that protein (more or less abundant in a cell line) but also the technical preparation of that cell line ( more or less  chromatin-enriched).
+ 
+So the whole attempt of the model is to determine how well each sample is prepared (chromatin-enriched) to then figure out if a protein in more abundant in that cell line. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(here)
+
+set.seed(324)
+
+
+real_protein_dataset <- readRDS(here("data/input/real_data_list.rds"))
+
+```
+
+
+```{r output-observed-data}
+# Real data set is imbalanced. Recommend randomly selecting 2 of the 7 samples for cell line 7. Don't lose too much data and avoids over emphasis on protein behaviour in this cell line. Alternatives require more complex statistics! 
+
+tibble(cell_line = real_protein_dataset$cell_line) |> 
+  group_by(cell_line) |> 
+  summarise(count = n()) |>
+  arrange(desc(count))
+
+resampled_real_dataset <- tibble(sample = rep(1:115, 50),
+       cell_line = rep(real_protein_dataset$cell_line, 50),
+       input_enrichment = rep(real_protein_dataset$input_enrichment, 50),
+       protein = rep(1:50, each = 115),
+       prot_intensity = c(real_protein_dataset$prot_intensity)) |>
+  group_by(cell_line) |>
+  filter(sample %in% sample(unique(sample), 2)) |>
+  arrange(protein, cell_line) |>
+  ungroup()
+
+real_protein_dataset$N <- 110
+
+real_protein_dataset$prot_intensity <- resampled_real_dataset$prot_intensity |>
+  matrix(nrow = 110)
+
+real_protein_dataset$input_enrichment <- resampled_real_dataset$input_enrichment[1:110]
+
+real_protein_dataset$cell_line <- resampled_real_dataset$cell_line[1:110]
+
+saveRDS(real_protein_dataset, here("data/output/subsampled_real_data_list.rds"))
+```
+
+```{r ingest_all_raw_data}
+full_raw_data <- read_csv(here("data/input/input_report.csv"))
+
+perfect_data_set <- full_raw_data |>
+  pivot_longer(-ProteinGroup, names_to = "sample", values_to = "prot_intensity") |>
+  separate(sample, sep ="_", into = c("tissue_name", "sample"), extra="merge") |>
+  separate(sample, sep ="_(?=[1-9]$)", into = c("cell_line_name", "rep_name")) |>
+  group_by(ProteinGroup) |>
+  filter(all(!is.na(prot_intensity)),
+         !str_detect(tissue_name, "pool")) |>
+  mutate(tissue_name = factor(tissue_name),
+         cell_line_name = factor(cell_line_name),
+         ProteinGroup = factor(ProteinGroup)) |>
+  ungroup()
+
+prepped_raw_data_set <- perfect_data_set |>
+  mutate(tissue = unclass(tissue_name),
+         cell_line = unclass(cell_line_name),
+         protein_id = unclass(ProteinGroup)) |>
+  group_by(ProteinGroup,cell_line, tissue) |>
+  mutate(rep = 1:length(rep_name)) |>
+  ungroup()
+  
+```
+
+```{r output, eval=FALSE}
+saveRDS(prepped_raw_data_set, here("data/output/perfect_real_data_set.rds"))
+```
