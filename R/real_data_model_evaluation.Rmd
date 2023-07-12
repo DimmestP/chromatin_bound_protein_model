@@ -62,6 +62,7 @@ n_tissues <- 2
 
 protein_intensity_array_real_data <- array(c(subset_perfect_data |>
   filter(tissue_name %in% c("lung", "breast")) |>
+    mutate(prot_intensity = log(prot_intensity)) |>
   arrange(ProteinGroup,
           tissue, 
           rep,
@@ -80,7 +81,7 @@ fit_real <- sampling(model_orig,
                              tissues = n_tissues,
                              prot_intensity = protein_intensity_array_real_data,
                              replicates = n_reps),
-                     iter = 1000,
+                     iter = 2000,
                      chains = 4)
 
 
@@ -136,19 +137,20 @@ ggplot( tibble(gen_prot_intensity=c(apply(extract(fit_real,"gen_prot_intensity")
                 cell_line = rep(rep(1:n_cell_lines, each = n_reps*n_tissues), n_prot),
                 protein_id = rep(1:n_prot, each = n_cell_lines*n_reps*n_tissues)) |>
          inner_join(subset_perfect_data_sorted)) +
-  geom_point(aes(x = gen_prot_intensity, y = prot_intensity))  +
+  geom_point(aes(x = gen_prot_intensity, y = log(prot_intensity)))  +
   labs(x="gen_prot_intensity")
 
 real_post_posterior_check <- fit_summary_real |> 
-  filter(str_detect(parameter, "cyto_C")) |>
+  filter(str_detect(parameter, "cyto_intensity")) |>
   transmute(cyto = median) |>
   bind_cols(fit_summary_real |> 
-  filter(str_detect(parameter, "m_C")) |>
+  filter(str_detect(parameter, "m_intensity")) |>
   transmute(chrom = median)) |>
   mutate(cell_line = rep(rep(1:n_cell_lines, each = n_prot), n_tissues),
          protein = rep(1:n_prot, n_cell_lines * n_tissues))
 
-ggplot(real_post_posterior_check |> filter(cell_line < 21)) +
-  geom_point(aes(x=log(cyto), y=log(chrom))) +
-  facet_wrap(~cell_line, ncol = 6, scales = "free")
+ggplot(real_post_posterior_check |> filter(cell_line < 11)) +
+  geom_point(aes(x=cyto, y=chrom)) +
+  facet_wrap(~protein, ncol = 6) +
+  coord_equal()
 ```

@@ -3,7 +3,7 @@ data {
   int<lower=0> proteins; //number of proteins 
   int<lower=0> replicates; //number of replicates
   int<lower=0> tissues; //number of replicates
-  matrix[cell_lines,proteins] prot_intensity[replicates,tissues]; // array of matricies of protein intensity from MS data per cell line (across replicates)
+  matrix<lower=0>[cell_lines,proteins] prot_intensity[replicates,tissues]; // array of matricies of protein intensity from MS data per cell line (across replicates)
   }
   
 parameters {
@@ -11,15 +11,14 @@ parameters {
   
   real<lower=0> sigma;
   real<lower=0> sigma_enrich;
-  real<lower=0> mu_enrich;
-  //vector<lower=0>[proteins] mu_chrom[tissues]; 
-  //vector<lower=0>[proteins] mu_cyto[tissues]; 
-  real<lower=0> mu_cell_line[tissues,cell_lines];
-  real<lower=0> cyto_extra[tissues,cell_lines];
+  real<lower=0,upper=1> mu_enrich;
+  
+  vector<lower=0>[proteins] mu_chrom;
+  vector<lower=0>[proteins] mu_cyto;
     
   // swapped dimensions to allow for easy vector addition (protein number is always column number of matrix)
-  matrix<lower=0>[cell_lines,proteins] chrom_C[tissues]; 
-  matrix<lower=0>[cell_lines,proteins] cyto_C[tissues];
+  matrix<lower=0>[cell_lines,proteins] chrom_intensity[tissues]; 
+  matrix<lower=0>[cell_lines,proteins] cyto_intensity[tissues];
   }
 
 transformed parameters{
@@ -28,8 +27,8 @@ transformed parameters{
   for(r in 1:replicates){
     for(c in 1:cell_lines){
       for(t in 1:tissues){
-        prot_intensity_est[r,t,c,] = enrichment[r,t,c]*chrom_C[t,c,] + 
-        (1-enrichment[r,t,c])*cyto_C[t,c,];
+        prot_intensity_est[r,t,c,] = enrichment[r,t,c]*chrom_intensity[t,c,] + 
+        (1-enrichment[r,t,c])*cyto_intensity[t,c,];
       }
     }
   }
@@ -42,17 +41,15 @@ model {
   sigma ~ exponential(1); // generally should define priors for all variables
   sigma_enrich ~ exponential(1); // generally should define priors for all variables
   mu_enrich ~ beta(3,2);
+  mu_chrom ~ normal(15,2); 
+  mu_cyto ~ normal(10,1); 
   
   for(t in 1:tissues){
-    mu_cell_line[t,] ~ normal(20,1);
-    cyto_extra[t,] ~ normal(15,1);
     
-    for(c in 1:cell_lines){ 
+    for(c in 1:cell_lines){
       
-      //mu_cyto[t,c] ~ normal(mu_cell_line[t,c],1); 
-      //mu_chrom[t,c] ~ normal(mu_cell_line[t,c] ,1); 
-      chrom_C[t,c,] ~ normal(mu_cell_line[t,c], 1);
-      cyto_C[t,c,] ~ normal(cyto_extra[t,c], 1); 
+      chrom_intensity[t,c,] ~ normal(mu_chrom, 1);
+      cyto_intensity[t,c,] ~ normal(mu_cyto, 1); 
     }
   }
 
