@@ -41,7 +41,6 @@ input_enrichment = sam_test_dataset_simple |>
 #in my actual experiment i don't have the true percentages, which I need to estimate
 # so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
 matrix_input = sam_test_dataset_simple |>
-  mutate(prot_int = prot_int) |>
   arrange(protein_id, cell_line) |>
   pull(prot_int) |>
   array(dim = c(n_reps, n_tissue, n_cell_lines, n_prot))
@@ -51,7 +50,7 @@ fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
                              tissues = n_tissue,
                              prot_intensity = matrix_input,
                              replicates = n_reps), 
-                 iter = 1000, chains = 4
+                 iter = 2000, chains = 4
                  # , init = init_fun
 )
 
@@ -78,37 +77,33 @@ ggplot(fit_summary |>
   geom_abline(slope = 1, intercept = 0)
 
 ggplot(fit_summary |> 
-         filter(str_detect(parameter, "chrom_C")) |>
+         filter(str_detect(parameter, "cyto_intensity")) |>
          mutate(protein_id = rep(1:20, 50),
                 cell_line = rep(1:50, each = 20)) |>
          inner_join(sam_test_dataset_simple |> 
                       group_by(protein_id,cell_line) |> 
                       summarise(Pr_cyto = mean(Pr_cyto)))) +
   geom_point(aes(x=median, y=Pr_cyto))  +
-  labs(x="chrom_C") +
-  coord_equal() +
-  theme_bw() +
+  labs(x="cyto_intensity") +
   geom_abline(slope = 1, intercept = 0)
 
 ggplot(fit_summary |> 
-         filter(str_detect(parameter, "cyto_C")) |>
+         filter(str_detect(parameter, "chrom_intensity")) |>
          mutate(protein_id = rep(1:20, 50),
                 cell_line = rep(1:50, each = 20)) |>
          inner_join(sam_test_dataset_simple |> 
                       group_by(protein_id,cell_line) |> 
                       summarise(Pr_nucl = mean(Pr_nucl)))) +
   geom_point(aes(x=median, y=Pr_nucl))  +
-  labs(x="cyto_C") +
-  coord_equal() +
-  theme_bw() +
+  labs(x="chrom_intensity") +
   geom_abline(slope = 1, intercept = 0)
 
 ggplot(fit3 |> 
          extract("gen_prot_intensity") |>
          as_tibble() |>
-         mutate(gen_prot_intensity=c(apply(gen_prot_intensity,c(2,3,4,5),median))) |>
+         summarise(gen_prot_intensity=c(apply(gen_prot_intensity,c(2,3,4,5),median))) |>
          mutate(rep = rep(1:2, 1000),
-                cell_line = rep(rep(1:50, each = 2), 20),
+               cell_line = rep(rep(1:50, each = 2), 20),
                 protein_id = rep(1:20, each = 100)) |>
          inner_join(sam_test_dataset_simple)) +
   geom_point(aes(x = gen_prot_intensity, y = prot_int))  +
@@ -118,10 +113,10 @@ ggplot(fit3 |>
   geom_abline(slope = 1, intercept = 0)
 
 mock_post_posterior_check <- fit_summary |> 
-  filter(str_detect(parameter, "cyto_C")) |>
+  filter(str_detect(parameter, "cyto_intensity")) |>
   transmute(cyto = median) |>
   bind_cols(fit_summary |> 
-  filter(str_detect(parameter, "m_C")) |>
+  filter(str_detect(parameter, "m_intensity")) |>
   transmute(chrom = median)) |>
   mutate(cell_line = rep(1:50, each = 20),
          protein = rep(1:20, 50))
