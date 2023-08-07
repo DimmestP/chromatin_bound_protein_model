@@ -19,7 +19,7 @@ parameters {
   
   vector<lower=0>[num_proteins] chrom_intensity_protein;
     
-  vector[num_proteins] chrom_intensity_cell_line[num_cell_lines]; 
+  vector[num_proteins] chrom_intensity_cell_line_n_min_1[num_cell_lines - 1]; 
   }
 
 transformed parameters{
@@ -34,7 +34,9 @@ transformed parameters{
   enrichment[num_samples] = 1 - sum(enrichment_n_min_1);
    
   for(s in 1:num_samples){
-      prot_intensity_est[s] = enrichment[s] + chrom_intensity_cell_line[cell_line[s]] + chrom_intensity_protein;
+    
+    if(cell_line[s] == num_cell_lines) prot_intensity_est[s] = enrichment[s] + chrom_intensity_protein;
+    else prot_intensity_est[s] = enrichment[s] + chrom_intensity_cell_line_n_min_1[cell_line[s]] + chrom_intensity_protein;
   }
 }
 
@@ -50,14 +52,14 @@ model {
   for(t in 1:num_tissue){
   mu_chrom[t] ~ normal(0,0.5); 
   }
-  for(c in 1:num_cell_lines){
+  for(c in 1:(num_cell_lines-1)){
       
-      chrom_intensity_cell_line[c] ~ normal(mu_chrom[tissue[c]], sigma_chrom[tissue[c]]);
+      chrom_intensity_cell_line_n_min_1[c] ~ normal(mu_chrom[tissue[c]], sigma_chrom[tissue[c]]);
   }
 
   for(s in 1:num_samples){
         // generally discouraged to have complex maths in call to sample from distribution
-    prot_intensity[s] ~ normal(prot_intensity_est[s], sigma);
+    prot_intensity[s] ~ lognormal(prot_intensity_est[s], sigma);
   }
 } 
 
@@ -65,6 +67,6 @@ generated quantities {
   real gen_prot_intensity[num_samples, num_proteins];
   
   for(s in 1:num_samples){
-    gen_prot_intensity[s] = normal_rng(prot_intensity_est[s], sigma);
+    gen_prot_intensity[s] = lognormal_rng(prot_intensity_est[s], sigma);
   }
 }
