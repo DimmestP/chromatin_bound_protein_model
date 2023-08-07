@@ -1,0 +1,169 @@
+---
+title: "Chromatin Bound Proteins Model Update"
+output: pdf_document
+date: "2023-08-07"
+---
+
+## Overview
+
+The Bayesian model deduces three variables:
+
+- $r_p$ : The cytoplasmic to nuclear ratio of a protein
+- $\epsilon_s$ : The chromatin enrichment of each sample
+- $I^{chr}_{pc}$ : The cell line specific intensity of a proteinin the chromatin
+
+$$I^{Tot}_{ps}=\epsilon_sI^{chr}_{pc}+(1-\epsilon_s)r_pI^{chr}_{pc}$$
+
+Intensities are normalised using a DESeq2-like median of medians before being placed inside the model.
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(here)
+library(tidybayes)
+library(latex2exp)
+library(rstan)
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+fit_real <- readRDS(here("data/output/trained_sub_real_data_model.rds"))
+subset_perfect_data <- readRDS(here("data/output/subset_perfect_data.rds"))
+
+arranged_subset_perfect_data = subset_perfect_data |>
+  arrange(tissue,
+          cell_line,
+          rep,
+          ProteinGroup)
+
+n_prot <- 300
+
+n_cell_lines = length(unique(subset_perfect_data$cell_line_name))
+
+n_sample = subset_perfect_data |>
+  filter(protein_id == protein_id[1]) |>
+  group_by(protein_id) |>
+  summarise(n()) |>
+  pull(`n()`)
+
+n_tissues <- 2
+
+test_enrichment <- read_csv(here("data/input/enrichment_plot_rep_sum_piv.csv")) |>
+  arrange(desc(N)) |>
+  separate(Sample, sep ="_", into = c("tissue_name", "sample"), extra="merge") |>
+  separate(sample, sep ="_(?=[1-9]$)", into = c("cell_line_name", "rep_name")) |>
+  mutate(tissue_name = factor(tissue_name),
+         cell_line_name = factor(cell_line_name))
+```
+
+```{r explore-posterior}
+
+protein_dictionary <- subset_perfect_data |>
+  group_by(ProteinGroup) |>
+  summarise(protein_id = protein_id[1]) |>
+  mutate(ProteinGroup = factor(ProteinGroup),
+         protein_id = unclass(ProteinGroup))
+
+cell_line_dictionary <- subset_perfect_data |>
+  group_by(cell_line_name, tissue_name) |>
+  summarise(tissue = tissue[1],
+            cell_line = cell_line[1])
+
+fit_summary_real <- summary(fit_real)$summary |> 
+  as_tibble(rownames = "parameter") |>
+  transmute(parameter,
+            median = `50%`)
+
+subset_perfect_data_sorted <- arranged_subset_perfect_data |> 
+  mutate(ProteinGroup = factor(ProteinGroup),
+         protein_id = unclass(ProteinGroup)) |>
+  group_by(ProteinGroup) |>
+  mutate(sample = rep(1:n_sample))
+
+enrichment_comparison <- subset_perfect_data_sorted |>
+          group_by(tissue_name, cell_line_name,
+                   rep_name,tissue, cell_line, rep, sample) |> 
+          summarise(unique(rep))|>
+  inner_join(test_enrichment) |>
+  ungroup() |>
+  inner_join(fit_real |> 
+  spread_draws(enrichment[sample]) |>
+  summarise_draws())
+  
+named_protein_results <- protein_dictionary |> 
+  inner_join(fit_real |> 
+  spread_draws(chrom_intensity_cell_line_n_min_1[cell_line,protein_id]) |>
+  summarise_draws()) |>
+  inner_join(cell_line_dictionary)
+
+```
+
+## Posterior Check
+
+Basic sanity check that the model outputs intensity values that match the input intensities.
+
+```{r full_posterior_check}
+ggplot( tibble(gen_prot_intensity=c(apply(extract(fit_real,"gen_prot_intensity")$gen_prot_intensity,c(2,3),median))) |>
+         mutate(sample = rep(1:n_sample, n_prot),
+                protein_id = rep(1:n_prot, each = n_sample)) |>
+         inner_join(subset_perfect_data_sorted)) +
+  geom_point(aes(x = log(gen_prot_intensity), y = log(prot_intensity)))  +
+  labs(x="Predicted Intensity",
+       y="Ground Truth Intensity") +
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0)
+```
+
+## Predicted Enrichment
+
+The relationship is not perfectly linear, as the model predicts greater enrichment the externally calculated enrichment increases for nuclear proteins and decreases for cytoplasmic genes.
+
+```{r nuclear_enrichment}
+ggplot(enrichment_comparison) +
+  geom_point(aes(x= 1 - median, y=N)) +
+  labs(x="Predicted Enrichment",
+       y="External Nuclear Enrichment") +
+  theme_bw()
+```
+
+```{r cytoplasm_enrichment}
+ggplot(enrichment_comparison) +
+  geom_point(aes(x= 1-median, y=C)) +
+  labs(x="Predicted Enrichment",
+       y="External Cytoplasmic Enrichment") +
+  theme_bw()
+```
+
+\newpage
+
+## Predicted protein localisation compared to Kathryn Lilley's hyperlopit results
+
+Although imperfect, there does appear to be a clear divide between proteins expected to be predominately in the cytoplasm and those expected to be in the nucleus.
+
+This is trained on a small subset of the data set (300 genes from 2 tissues).
+
+```{r compare-to-hyperlopit}
+protein_localisation_dataset <- read_tsv(here("data/input/annot_hyperlopit.tsv")) |>
+  mutate(final.assignment = as.factor(final.assignment))
+
+compare_localisation <- protein_dictionary |> 
+  inner_join(fit_real |> 
+  spread_draws(cyto_chrom_ratio[protein_id]) |>
+  summarise_draws()) |> 
+  mutate(Uniprot = ifelse(str_detect(ProteinGroup, ";"),
+                               str_extract(ProteinGroup, "[A-Z0-9-]+(?=;)"),
+                               as.character(ProteinGroup))) |>
+  inner_join(protein_localisation_dataset) |>
+  transmute(Uniprot,
+            is.cyto = median > 1,
+            final.assignment,
+            median)
+
+ggplot(compare_localisation) +
+  geom_hline(yintercept = 0, colour = "red")+
+  geom_boxplot(aes(x = final.assignment, y=log2(median))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90),
+        axis.title.x = element_blank()) +
+  labs(y = TeX("log $N^{Chr}$ / $N^{Cyt}$")) 
+  
+```
+

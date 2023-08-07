@@ -57,7 +57,7 @@ ggplot(perfect_real_data_set_normalised) +
 ```
 
 ```{r run-stan-model-real, eval=FALSE}
-n_prot <- 50
+n_prot <- 300
 
 n_tissues <- 2
 
@@ -184,6 +184,31 @@ ggplot( tibble(gen_prot_intensity=c(apply(extract(fit_real,"gen_prot_intensity")
   labs(x="gen_prot_intensity")
 ```
 
+```{r compare-to-hyperlopit}
+protein_localisation_dataset <- read_tsv(here("data/input/annot_hyperlopit.tsv")) |>
+  mutate(final.assignment = as.factor(final.assignment))
+
+compare_localisation <- protein_dictionary |> 
+  inner_join(fit_real |> 
+  spread_draws(cyto_chrom_ratio[protein_id]) |>
+  summarise_draws()) |> 
+  mutate(Uniprot = ifelse(str_detect(ProteinGroup, ";"),
+                               str_extract(ProteinGroup, "[A-Z0-9-]+(?=;)"),
+                               as.character(ProteinGroup))) |>
+  inner_join(protein_localisation_dataset) |>
+  transmute(Uniprot,
+            is.cyto = median > 1,
+            final.assignment,
+            median)
+
+ggplot(compare_localisation) +
+  geom_point(aes(x = final.assignment, y=median))
+```
+
 ```{r run-stanfit, eval=FALSE}
 launch_shinystan(fit_real)
+
+saveRDS(fit_real, file = here("data/output/trained_sub_real_data_model.rds"))
+
+saveRDS(subset_perfect_data, file = here("data/output/subset_perfect_data.rds"))
 ```
