@@ -9,13 +9,19 @@ data {
   }
   
 parameters {
-  vector[num_samples - 1] enrichment_n_min_1;
+  vector<lower=0, upper=1>[num_samples] enrichment;
+  
+  vector<lower=0>[num_proteins] prot_intensity_est_cyto;
+  
+  vector<lower=0>[num_proteins] prot_intensity_est_chrom[num_samples];
   
   real<lower=0> sigma;
   
-  vector[num_proteins] mu_chrom[num_tissue];
+  vector<lower=0>[num_proteins] mu_chrom[num_tissue];
   
   vector<lower=0>[num_tissue] sigma_chrom;
+  
+  real<lower=0> sigma_chrom_est;
   
   vector<lower=0>[num_proteins] chrom_intensity_protein;
     
@@ -24,17 +30,12 @@ parameters {
 
 transformed parameters{
   vector[num_proteins] prot_intensity_est[num_samples];
-  
-  vector[num_samples] enrichment;
-  
-  for(s in 1:(num_samples - 1) ){
-    enrichment[s] = enrichment_n_min_1[s];
-  }
-  
-  enrichment[num_samples] = 1 - sum(enrichment_n_min_1);
+  vector[num_proteins] prot_intensity_sum_chrom[num_samples];
    
   for(s in 1:num_samples){
-      prot_intensity_est[s] = enrichment[s] + chrom_intensity_cell_line[cell_line[s]] + chrom_intensity_protein;
+      prot_intensity_sum_chrom[s] =  chrom_intensity_cell_line[cell_line[s]] + chrom_intensity_protein;
+      
+      prot_intensity_est[s] = enrichment[s] * prot_intensity_est_chrom[s] + (1 - enrichment[s]) * prot_intensity_est_cyto;
   }
 }
 
@@ -43,12 +44,14 @@ model {
   
   sigma ~ gamma(2,2);
   sigma_chrom ~ gamma(2,2);
+  sigma_chrom_est ~ gamma(2,2);
   
   chrom_intensity_protein ~ normal(15,2);
-  enrichment_n_min_1 ~ normal(0, 0.3);
+  prot_intensity_est_cyto ~ lognormal(13,2);
+  enrichment ~ beta(5, 2);
   
   for(t in 1:num_tissue){
-  mu_chrom[t] ~ normal(0,0.5); 
+  mu_chrom[t] ~ normal(0,0.3); 
   }
   for(c in 1:num_cell_lines){
       
@@ -56,6 +59,7 @@ model {
   }
 
   for(s in 1:num_samples){
+    prot_intensity_est_chrom[s] ~ lognormal(prot_intensity_sum_chrom[s], sigma_chrom_est);
         // generally discouraged to have complex maths in call to sample from distribution
     prot_intensity[s] ~ normal(prot_intensity_est[s], sigma);
   }

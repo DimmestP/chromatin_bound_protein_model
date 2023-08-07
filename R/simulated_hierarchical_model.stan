@@ -6,19 +6,18 @@ data {
   matrix<lower=0>[cell_lines,proteins] prot_intensity[replicates,tissues]; // array of matricies of protein intensity from MS data per cell line (across replicates)
   }
   
-parameters {
-  vector<lower=0,upper=1>[cell_lines] enrichment[replicates,tissues];
+parameters { 
+  vector<lower=0>[cell_lines] enrichment[replicates,tissues];
   
   real<lower=0> sigma;
-  real<lower=0> sigma_enrich;
-  real<lower=0,upper=1> mu_enrich;
   
-  vector<lower=0>[proteins] mu_chrom;
-  vector<lower=0>[proteins] mu_cyto;
+  vector[proteins] mu_chrom[tissues];
+  
+  vector<lower=0>[tissues] sigma_chrom;
+  
+  vector<lower=0>[proteins] chrom_intensity_protein;
     
-  // swapped dimensions to allow for easy vector addition (protein number is always column number of matrix)
-  matrix<lower=0>[cell_lines,proteins] chrom_intensity[tissues]; 
-  matrix<lower=0>[cell_lines,proteins] cyto_intensity[tissues];
+  matrix[cell_lines,proteins] chrom_intensity_cell_line[tissues]; 
   }
 
 transformed parameters{
@@ -27,8 +26,9 @@ transformed parameters{
   for(r in 1:replicates){
     for(c in 1:cell_lines){
       for(t in 1:tissues){
-        prot_intensity_est[r,t,c,] = enrichment[r,t,c]*chrom_intensity[t,c,] + 
-        (1-enrichment[r,t,c])*cyto_intensity[t,c,];
+        for(p in 1:proteins){
+        prot_intensity_est[r,t,c,p] = enrichment[r,t,c] * (chrom_intensity_cell_line[t,c,p] + chrom_intensity_protein[p]);
+        }
       }
     }
   }
@@ -37,25 +37,23 @@ transformed parameters{
 
 model {
   
-  // chromatin_fraction ~ beta(2.5, 2.5); removed for same issue with enrichment
-  sigma ~ exponential(1); // generally should define priors for all variables
-  sigma_enrich ~ exponential(1); // generally should define priors for all variables
-  mu_enrich ~ beta(3,2);
-  mu_chrom ~ normal(15,2); 
-  mu_cyto ~ normal(10,1); 
+  sigma ~ gamma(2,2);
+  sigma_chrom ~ gamma(2,2);
+  
+  chrom_intensity_protein ~ normal(15,2);
   
   for(t in 1:tissues){
+  mu_chrom[t] ~ normal(0,4); 
     
-    for(c in 1:cell_lines){
+    for(p in 1:proteins){
       
-      chrom_intensity[t,c,] ~ normal(mu_chrom, 1);
-      cyto_intensity[t,c,] ~ normal(mu_cyto, 1); 
+      chrom_intensity_cell_line[t,,p] ~ normal(mu_chrom[t,p], sigma_chrom[t]);
     }
   }
 
   for(r in 1:replicates){
     for(t in 1:tissues){
-      enrichment[r,t] ~ normal(mu_enrich, sigma_enrich);
+      enrichment[r,t] ~ normal(1, 0.3);
 
       for(p in 1:proteins){ 
         // generally discouraged to have complex maths in call to sample from distribution

@@ -50,7 +50,7 @@ fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
                              tissues = n_tissue,
                              prot_intensity = matrix_input,
                              replicates = n_reps), 
-                 iter = 2000, chains = 4
+                 iter = 1000, chains = 4
                  # , init = init_fun
 )
 
@@ -72,7 +72,6 @@ ggplot(fit_summary |>
                       summarise(enrichment = unique(enrichment)))) +
   geom_point(aes(x= median, y=enrichment)) +
   labs(x="Enrichment") +
-  coord_equal() +
   theme_bw() +
   geom_abline(slope = 1, intercept = 0)
 
@@ -108,7 +107,6 @@ ggplot(fit3 |>
          inner_join(sam_test_dataset_simple)) +
   geom_point(aes(x = gen_prot_intensity, y = prot_int))  +
   labs(x="gen_prot_intensity") +
-  coord_equal() +
   theme_bw() +
   geom_abline(slope = 1, intercept = 0)
 
@@ -128,6 +126,27 @@ ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
 ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
   geom_point(aes(x=cyto, y=chrom)) +
   facet_wrap(~protein, ncol = 6, scales = "free")
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "chrom_intensity")) |>
+         transmute(protein_id = rep(1:20, 50),
+                chrom_intensity = median,
+                cell_line = rep(1:50, each = 20)) |>
+         inner_join(fit_summary |> 
+         filter(str_detect(parameter, "cyto_intensity")) |>
+         transmute(protein_id = rep(1:20, 50),
+                cyto_intensity = median,
+                cell_line = rep(1:50, each = 20))) |>
+  transmute(protein_id,
+            cell_line,
+            predicted_change = cyto_intensity - chrom_intensity) |>
+  inner_join(sam_test_dataset_simple |>
+               filter(rep == 1) |>
+               transmute(protein_id,
+                      cell_line,
+                      simulated_change = Pr_cyto - Pr_nucl))) +
+  geom_point(aes(x = predicted_change, y= -simulated_change)) +
+  geom_abline(slope = 1, intercept = 0)
 
 ```
 
