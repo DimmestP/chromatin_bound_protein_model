@@ -162,8 +162,12 @@ ggplot(compare_localisation) +
   geom_boxplot(aes(x = final.assignment, y=log2(median))) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90),
-        axis.title.x = element_blank()) +
-  labs(y = TeX("log $N^{Chr}$ / $N^{Cyt}$")) 
+        axis.title.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(y = "Nuclear Localisation") +
+  scale_y_continuous(breaks = c(4.59512,2.197225,1.098612,0,-1.098612,-2.197225,-4.59512,-9.21024),
+                     labels = c("99%","90%","75%","50%","25%","10%","1%","0.01%"))
+  
   
 ```
 
