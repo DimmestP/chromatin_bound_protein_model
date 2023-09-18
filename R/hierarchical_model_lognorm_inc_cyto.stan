@@ -19,7 +19,7 @@ parameters {
   
   vector<lower=0>[num_tissue] sigma_chrom;
   
-  vector<lower=0>[num_proteins] chrom_intensity_protein;
+  vector[num_proteins] chrom_intensity_protein;
     
   vector[num_proteins] chrom_intensity_cell_line_n_min_1[num_cell_lines - 1]; 
   }
@@ -38,13 +38,13 @@ transformed parameters{
 
 model {
   
-  sigma ~ gamma(2,2);
-  sigma_chrom ~ gamma(2,2);
+  sigma ~ exponential(1);
+  sigma_chrom ~ exponential(1);
   
-  chrom_intensity_protein ~ normal(15,2);
-  enrichment ~ beta(4, 2);
+  chrom_intensity_protein ~ normal(18,2);
+  enrichment ~ normal(0.7,0.2);
   
-  cyto_chrom_ratio ~ exponential(1);
+  cyto_chrom_ratio ~ normal(1,0.4);
   
   for(t in 1:num_tissue){
   mu_chrom[t] ~ normal(0,0.5); 
