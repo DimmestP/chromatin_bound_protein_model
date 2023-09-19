@@ -57,9 +57,9 @@ ggplot(perfect_real_data_set_normalised) +
 ```
 
 ```{r run-stan-model-real}
-n_prot <- 100
+n_prot <- 400
 
-n_tissues <- 10
+n_tissues <- 5
 
 subset_perfect_protein_names <- perfect_real_data_set_normalised |> 
   pull(ProteinGroup) |>
@@ -166,7 +166,7 @@ enrichment_comparison <- subset_perfect_data_sorted |>
   
 named_protein_results <- protein_dictionary |> 
   inner_join(fit_real |> 
-  spread_draws(cyto_chrom_diff_cell_line_n_min_1[cell_line,protein_id]) |>
+  spread_draws(cyto_chrom_diff_cell_line[cell_line,protein_id]) |>
   summarise_draws()) |>
   inner_join(cell_line_dictionary |> 
                filter(tissue %in% 1:3))
@@ -242,7 +242,7 @@ compare_localisation <- protein_dictionary |>
 
 compare_cell_line_localisation <- protein_dictionary |> 
   inner_join(fit_real |> 
-  spread_draws(cyto_chrom_diff_cell_line_n_min_1[protein_id, cell_line]) |>
+  spread_draws(cyto_chrom_diff_cell_line[protein_id, cell_line]) |>
   summarise_draws()) |> 
   inner_join(cell_line_dictionary) |>
   mutate(Uniprot = ifelse(str_detect(ProteinGroup, ";"),
@@ -267,12 +267,18 @@ ggplot(compare_cell_line_localisation |>
   facet_wrap(~cell_line_name)
 
 ggplot(compare_localisation) +
-  geom_boxplot(aes(x = final.assignment, y=log((chrom_intensity_protein)/(cyto_intensity_protein)))) +
+  geom_boxplot(aes(x = final.assignment, y=log(cyto_intensity_protein))) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90),
         axis.title.x = element_blank(),
-        panel.grid.minor.y = element_blank()) +
-  labs(y = "Nuclear Localisation")
+        panel.grid.minor.y = element_blank())
+
+ggplot(compare_localisation) +
+  geom_boxplot(aes(x = final.assignment, y=log(chrom_intensity_protein))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90),
+        axis.title.x = element_blank(),
+        panel.grid.minor.y = element_blank())
 ```
 ```{r explore_hyperparameters}
 sigma_samples<- spread_draws(fit_real, sigma)

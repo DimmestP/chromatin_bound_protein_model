@@ -17,7 +17,7 @@ parameters {
   
   vector<lower=0>[num_proteins] cyto_intensity_protein;
     
-  vector<lower=0>[num_proteins] cyto_chrom_diff_cell_line_n_min_1[num_cell_lines - 1]; 
+  vector<lower=0>[num_proteins] cyto_chrom_diff_cell_line[num_cell_lines]; 
   }
 
 transformed parameters{
@@ -26,14 +26,8 @@ transformed parameters{
   vector[num_proteins] chrom_intensity_temp;
    
   for(s in 1:num_samples){
-    if(cell_line[s] == num_cell_lines) {
-      cyto_intensity_temp = cyto_intensity_protein;
-      chrom_intensity_temp = chrom_intensity_protein;
-      }
-    else {
-      cyto_intensity_temp = cyto_intensity_protein - cyto_chrom_diff_cell_line_n_min_1[cell_line[s]];
-      chrom_intensity_temp = chrom_intensity_protein + cyto_chrom_diff_cell_line_n_min_1[cell_line[s]];
-      }
+      cyto_intensity_temp = cyto_intensity_protein - cyto_chrom_diff_cell_line[cell_line[s]];
+      chrom_intensity_temp = chrom_intensity_protein + cyto_chrom_diff_cell_line[cell_line[s]];
     prot_intensity_est[s] = enrichment[s] * chrom_intensity_temp + (1 - enrichment[s]) * cyto_intensity_temp;
   }
 }
@@ -43,18 +37,18 @@ model {
   
   sigma_total_intensity ~ lognormal(15,1);
   
-  cyto_intensity_protein ~ lognormal(17,2);
-  chrom_intensity_protein ~ lognormal(15,2);
+  cyto_intensity_protein ~ lognormal(15,3);
+  chrom_intensity_protein ~ lognormal(15,3);
   
-  enrichment ~ normal(0.7,0.2);
+  enrichment ~ normal(0.5,0.2);
   
-  for(c in 1:(num_cell_lines-1)){
+  for(c in 1:num_cell_lines){
       
-      cyto_chrom_diff_cell_line_n_min_1[c] ~ lognormal(15, 3);
+      cyto_chrom_diff_cell_line[c] ~ lognormal(15, 3);
   }
 
   for(s in 1:num_samples){
-        // generally discouraged to have complex maths in call to sample from distribution
+    
     prot_intensity[s] ~ normal(prot_intensity_est[s], sigma_total_intensity);
   }
 } 
