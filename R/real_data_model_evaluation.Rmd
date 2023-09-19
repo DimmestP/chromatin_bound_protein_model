@@ -57,9 +57,9 @@ ggplot(perfect_real_data_set_normalised) +
 ```
 
 ```{r run-stan-model-real}
-n_prot <- 20
+n_prot <- 100
 
-n_tissues <- 2
+n_tissues <- 10
 
 subset_perfect_protein_names <- perfect_real_data_set_normalised |> 
   pull(ProteinGroup) |>
@@ -114,7 +114,7 @@ fit_real <- sampling(model_orig,
                                    rep == 1) |> 
                             pull(tissue),
                           prot_intensity = protein_intensity_array_real_data),
-                     iter = 100,
+                     iter = 1000,
                      thin = 10,
                      chains = 4)
 
@@ -166,13 +166,31 @@ enrichment_comparison <- subset_perfect_data_sorted |>
   
 named_protein_results <- protein_dictionary |> 
   inner_join(fit_real |> 
-  spread_draws(chrom_intensity_cell_line_n_min_1[cell_line,protein_id]) |>
+  spread_draws(cyto_chrom_diff_cell_line_n_min_1[cell_line,protein_id]) |>
   summarise_draws()) |>
-  inner_join(cell_line_dictionary)
+  inner_join(cell_line_dictionary |> 
+               filter(tissue %in% 1:3))
 
 ggplot(named_protein_results) + 
-  geom_point(aes(x=ProteinGroup, y=median)) + 
+  geom_point(aes(x=ProteinGroup, y=log(median))) + 
   facet_wrap(~cell_line_name)
+
+ base_protein_results <- protein_dictionary |> 
+  inner_join(fit_real |> 
+  spread_draws(cyto_intensity_temp[protein_id],
+               chrom_intensity_temp[protein_id]) |>
+  summarise_draws())
+
+variance_protein_results <- protein_dictionary |> 
+  inner_join(fit_real |> 
+  spread_draws(sigma_total_intensity[protein_id]) |>
+  summarise_draws())
+  
+ggplot(variance_protein_results) + 
+  geom_point(aes(x=ProteinGroup, y=log(median)))
+ 
+ggplot(base_protein_results) + 
+  geom_point(aes(x=ProteinGroup, y=log(median), colour = variable))
 
 ggplot(test_enrichment) +
   geom_point(aes(x= C, y=N))
@@ -203,7 +221,8 @@ protein_localisation_dataset <- read_tsv(here("data/input/annot_hyperlopit.tsv")
 
 compare_localisation <- protein_dictionary |> 
   inner_join(fit_real |> 
-  spread_draws(cyto_chrom_ratio[protein_id]) |>
+  spread_draws(cyto_intensity_protein[protein_id],
+               chrom_intensity_protein[protein_id]) |>
   summarise_draws()) |> 
   mutate(Uniprot = ifelse(str_detect(ProteinGroup, ";"),
                                str_extract(ProteinGroup, "[A-Z0-9-]+(?=;)"),
@@ -212,18 +231,48 @@ compare_localisation <- protein_dictionary |>
   transmute(Uniprot,
             is.cyto = median > 1,
             final.assignment,
-            median)
+            median,
+            variable) |>
+  group_by(Uniprot) |>
+  summarise(variable = variable[1:2],
+            final.assignment = final.assignment[1:2],
+            median = median[1:2]) |>
+  pivot_wider(names_from = variable,
+              values_from = median)
 
-ggplot(compare_localisation) +
-  geom_hline(yintercept = 0, colour = "red")+
-  geom_boxplot(aes(x = final.assignment, y=log2(median))) +
+compare_cell_line_localisation <- protein_dictionary |> 
+  inner_join(fit_real |> 
+  spread_draws(cyto_chrom_diff_cell_line_n_min_1[protein_id, cell_line]) |>
+  summarise_draws()) |> 
+  inner_join(cell_line_dictionary) |>
+  mutate(Uniprot = ifelse(str_detect(ProteinGroup, ";"),
+                               str_extract(ProteinGroup, "[A-Z0-9-]+(?=;)"),
+                               as.character(ProteinGroup))) |>
+  inner_join(protein_localisation_dataset) |>
+  transmute(Uniprot,
+            cell_line_name,
+            final.assignment,
+            median,
+            variable) |>
+  inner_join(compare_localisation)
+
+ggplot(compare_cell_line_localisation |>
+         filter(cell_line_name %in% c("cancer_a172", "cancer_a375", "cancer_a549"))) +
+  geom_boxplot(aes(x = final.assignment, y=log((cyto_intensity_protein-median)/(chrom_intensity_protein+median)))) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90),
         axis.title.x = element_blank(),
         panel.grid.minor.y = element_blank()) +
   labs(y = "Nuclear Localisation") +
-  scale_y_continuous(breaks = c(4.59512,2.197225,1.098612,0,-1.098612,-2.197225,-4.59512,-9.21024),
-                     labels = c("99%","90%","75%","50%","25%","10%","1%","0.01%"))
+  facet_wrap(~cell_line_name)
+
+ggplot(compare_localisation) +
+  geom_boxplot(aes(x = final.assignment, y=log((chrom_intensity_protein)/(cyto_intensity_protein)))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90),
+        axis.title.x = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(y = "Nuclear Localisation")
 ```
 ```{r explore_hyperparameters}
 sigma_samples<- spread_draws(fit_real, sigma)
@@ -235,25 +284,25 @@ ggplot(sigma_samples |>
   geom_histogram(aes(x=values, fill = source), alpha = 0.7) +
   theme_minimal()
 
-sigma_chrom_samples<- spread_draws(fit_real, sigma_chrom[tissue]) |>
+sigma_cyto_samples<- spread_draws(fit_real, sigma_cyto[tissue]) |>
   summarise_draws()
 
-ggplot(sigma_chrom_samples |>
+ggplot(sigma_cyto_samples |>
          ungroup() |>
-  transmute(sigma_chrom = median,
+  transmute(sigma_cyto = median,
             prior = rexp(10, 1)) |>
-    pivot_longer(cols = c("sigma_chrom","prior"), names_to = "source", values_to = "values")) +
+    pivot_longer(cols = c("sigma_cyto","prior"), names_to = "source", values_to = "values")) +
   geom_histogram(aes(x=values, fill = source), alpha = 0.7) +
   theme_minimal()
 
-chrom_intensity_protein_samples <- spread_draws(fit_real, chrom_intensity_protein[protein]) |>
+cyto_intensity_protein_samples <- spread_draws(fit_real, cyto_intensity_protein[protein]) |>
   summarise_draws()
 
-ggplot(chrom_intensity_protein_samples |>
+ggplot(cyto_intensity_protein_samples |>
          ungroup() |>
-  transmute(chrom_intensity_protein =median,
+  transmute(cyto_intensity_protein =median,
             prior = rnorm(100, 18,2)) |>
-    pivot_longer(cols = c("chrom_intensity_protein","prior"), names_to = "source", values_to = "values")) +
+    pivot_longer(cols = c("cyto_intensity_protein","prior"), names_to = "source", values_to = "values")) +
   geom_histogram(aes(x=values, fill = source), alpha = 0.7) +
   theme_minimal()
 
@@ -280,14 +329,14 @@ ggplot(cyto_chrom_ratio_sample |>
   theme_minimal()+
   lims(x = c(0,3))
 
-mu_chrom_sample <- spread_draws(fit_real, mu_chrom[tissue,protein]) |>
+mu_cyto_sample <- spread_draws(fit_real, mu_cyto[tissue,protein]) |>
   summarise_draws()
 
-ggplot(mu_chrom_sample |>
+ggplot(mu_cyto_sample |>
          ungroup() |>
-  transmute(mu_chrom =median,
+  transmute(mu_cyto =median,
             prior = rnorm(1000, 0, 0.5)) |>
-    pivot_longer(cols = c("mu_chrom","prior"), names_to = "source", values_to = "values")) +
+    pivot_longer(cols = c("mu_cyto","prior"), names_to = "source", values_to = "values")) +
   geom_histogram(aes(x=values, fill = source), alpha = 0.7) +
   theme_minimal()
 ```
