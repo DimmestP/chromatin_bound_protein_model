@@ -10,6 +10,7 @@ library(tidyverse)
 library(here)
 library(tidybayes)
 library(rstan)
+library(shinystan)
 
 sam_test_dataset_simple <- read_csv(here("data/output/simulated_dataset.csv"))
 
@@ -29,8 +30,6 @@ options(mc.cores = 4)
 ```
 
 ```{r run-stan-model-simulated}
-
-
 input_enrichment = sam_test_dataset_simple |>
   group_by(cell_line)|>
   arrange(cell_line) |>
@@ -41,113 +40,284 @@ input_enrichment = sam_test_dataset_simple |>
 #in my actual experiment i don't have the true percentages, which I need to estimate
 # so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
 matrix_input = sam_test_dataset_simple |>
-  arrange(protein_id, cell_line) |>
+  arrange(cell_line, rep, protein_id) |>
   pull(prot_int) |>
-  array(dim = c(n_reps, n_tissue, n_cell_lines, n_prot))
+  array(dim = c(n_prot,
+                n_reps*n_cell_lines)) |>
+  aperm(c(2,1))
   
-fit3 <- sampling(model_orig, list(cell_lines = n_cell_lines,
-                             proteins = n_prot,
-                             tissues = n_tissue,
-                             prot_intensity = matrix_input,
-                             replicates = n_reps), 
-                 iter = 1000, chains = 4
+fit3 <- sampling(model_orig, list(num_cell_lines = n_cell_lines,
+                                  num_samples = n_reps*n_cell_lines,
+                                  num_proteins = n_prot,
+                                  cell_line = rep(1:n_cell_lines, each = n_reps),
+                                  num_tissue = n_tissue,
+                                  tissue = rep(1, n_cell_lines),
+                                  prot_intensity = matrix_input), 
+                 iter = 2000, chains = 4
                  # , init = init_fun
 )
 
 # save(fit3, file=here("data/output/simulated_data_model_result"))
 ```
 
-```{r explore-posterior}
+```{r explore-posterior-cell-line, eval=TRUE}
 fit_summary <- summary(fit3)$summary |> 
   as_tibble(rownames = "parameter") |>
   transmute(parameter,
             median = `50%`)
 
+
 ggplot(fit_summary |> 
-         filter(str_detect(parameter, "enrichment")) |>
-         mutate(rep = rep(1:2, each = 50),
-                cell_line = rep(1:50, 2)) |>
+         filter(str_detect(parameter, "enrichment\\[")) |>
+         mutate(rep = rep(1:n_reps, n_cell_lines),
+                cell_line = rep(1:n_cell_lines, each = n_reps)) |>
          inner_join(sam_test_dataset_simple |> 
                       group_by(rep,cell_line) |> 
                       summarise(enrichment = unique(enrichment)))) +
   geom_point(aes(x= median, y=enrichment)) +
   labs(x="Enrichment") +
   theme_bw() +
-  geom_abline(slope = 1, intercept = 0)
+  geom_abline(slope = 1, intercept = 0) +
+  coord_equal()
 
 ggplot(fit_summary |> 
-         filter(str_detect(parameter, "cyto_intensity")) |>
-         mutate(protein_id = rep(1:20, 50),
-                cell_line = rep(1:50, each = 20)) |>
+         filter(str_detect(parameter, "cyto_chrom_diff_protein\\[")) |>
+         mutate(protein_id = rep(1:n_prot,n_cell_lines-1),
+                cell_line = rep(1:(n_cell_lines-1),each = n_prot)) |>
          inner_join(sam_test_dataset_simple |> 
-                      group_by(protein_id,cell_line) |> 
-                      summarise(Pr_cyto = mean(Pr_cyto)))) +
-  geom_point(aes(x=median, y=Pr_cyto))  +
-  labs(x="cyto_intensity") +
-  geom_abline(slope = 1, intercept = 0)
-
-ggplot(fit_summary |> 
-         filter(str_detect(parameter, "chrom_intensity")) |>
-         mutate(protein_id = rep(1:20, 50),
-                cell_line = rep(1:50, each = 20)) |>
-         inner_join(sam_test_dataset_simple |> 
-                      group_by(protein_id,cell_line) |> 
-                      summarise(Pr_nucl = mean(Pr_nucl)))) +
-  geom_point(aes(x=median, y=Pr_nucl))  +
+                      group_by(protein_id,
+                               cell_line) |> 
+                      summarise(Pr_chrom = mean(change_abund)))) +
+  geom_point(aes(median, y=Pr_chrom))  +
   labs(x="chrom_intensity") +
-  geom_abline(slope = 1, intercept = 0)
+  geom_abline(slope = 1, intercept = 0) +
+  coord_equal()
+
 
 ggplot(fit3 |> 
          extract("gen_prot_intensity") |>
          as_tibble() |>
-         summarise(gen_prot_intensity=c(apply(gen_prot_intensity,c(2,3,4,5),median))) |>
-         mutate(rep = rep(1:2, 1000),
-               cell_line = rep(rep(1:50, each = 2), 20),
-                protein_id = rep(1:20, each = 100)) |>
+         summarise(gen_prot_intensity=c(apply(gen_prot_intensity,c(2,3),median))) |>
+         mutate(rep = rep(1:n_reps, n_cell_lines * n_prot),
+               cell_line = rep(rep(1:n_cell_lines, each = n_reps), n_prot),
+                protein_id = rep(1:n_prot, each = n_reps * n_cell_lines)) |>
          inner_join(sam_test_dataset_simple)) +
-  geom_point(aes(x = gen_prot_intensity, y = prot_int))  +
+  geom_point(aes(x = gen_prot_intensity, y = prot_int, colour = protein_id))  +
   labs(x="gen_prot_intensity") +
   theme_bw() +
-  geom_abline(slope = 1, intercept = 0)
-
-mock_post_posterior_check <- fit_summary |> 
-  filter(str_detect(parameter, "cyto_intensity")) |>
-  transmute(cyto = median) |>
-  bind_cols(fit_summary |> 
-  filter(str_detect(parameter, "m_intensity")) |>
-  transmute(chrom = median)) |>
-  mutate(cell_line = rep(1:50, each = 20),
-         protein = rep(1:20, 50))
-
-ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
-  geom_point(aes(x=cyto, y=chrom)) +
-  facet_wrap(~cell_line, ncol = 6)
-
-ggplot(mock_post_posterior_check |> filter(cell_line < 21)) +
-  geom_point(aes(x=cyto, y=chrom)) +
-  facet_wrap(~protein, ncol = 6, scales = "free")
+  geom_abline(slope = 1, intercept = 0)  +
+  coord_equal()
 
 ggplot(fit_summary |> 
-         filter(str_detect(parameter, "chrom_intensity")) |>
-         transmute(protein_id = rep(1:20, 50),
-                chrom_intensity = median,
-                cell_line = rep(1:50, each = 20)) |>
+         filter(str_detect(parameter, "cyto_intensity_sum")) |>
+         mutate(protein_id = rep(1:n_prot,n_cell_lines),
+                cell_line = rep(1:n_cell_lines,each = n_prot)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id,
+                               cell_line) |>
+                      summarise(Pr_cyto = mean(Pr_cyto)))) +
+  geom_point(aes(median, y=Pr_cyto))  +
+  labs(x="cyto_intensity") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "chrom_intensity_sum")) |>
+         mutate(protein_id = rep(1:n_prot,n_cell_lines),
+                cell_line = rep(1:n_cell_lines,each = n_prot)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id,
+                               cell_line) |> 
+                      summarise(Pr_nucl = mean(Pr_nucl)))) +
+  geom_point(aes(median, y=Pr_nucl))  +
+  labs(x="chrom_intensity") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "chrom_intensity_sum")) |>
+         mutate(protein_id = rep(1:n_prot,n_cell_lines),
+                cell_line = rep(1:n_cell_lines,each = n_prot),
+                                chrom = median) |>
          inner_join(fit_summary |> 
-         filter(str_detect(parameter, "cyto_intensity")) |>
-         transmute(protein_id = rep(1:20, 50),
-                cyto_intensity = median,
-                cell_line = rep(1:50, each = 20))) |>
-  transmute(protein_id,
-            cell_line,
-            predicted_change = cyto_intensity - chrom_intensity) |>
+                      filter(str_detect(parameter, "cyto_intensity_sum")) |>
+                      transmute(protein_id = rep(1:n_prot,n_cell_lines),
+                                cell_line = rep(1:n_cell_lines,each = n_prot),
+                                cyto = median)) |>
+         filter(protein_id < 20)) +
+  geom_point(aes(chrom, y=cyto, colour = factor(protein_id)))  +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+```
+
+```{r explore-posterior-no-cell-line, eval=FALSE}
+fit_summary <- summary(fit3)$summary |> 
+  as_tibble(rownames = "parameter") |>
+  transmute(parameter,
+            median = `50%`)
+
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "enrichment\\[")) |>
+         mutate(rep = rep(1:n_reps, n_cell_lines),
+                cell_line = rep(1:n_cell_lines, each = n_reps)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(rep,cell_line) |> 
+                      summarise(enrichment = unique(enrichment)))) +
+  geom_point(aes(x= median, y=enrichment)) +
+  labs(x="Enrichment") +
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "chrom_intensity_protein")) |>
+         mutate(protein_id = 1:n_prot) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id) |> 
+                      summarise(Pr_chrom = mean(Pr_nucl)))) +
+  geom_point(aes(median, y=Pr_chrom))  +
+  labs(x="chrom_intensity") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "chrom_intensity_protein")) |>
+         mutate(protein_id = 1:n_prot) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id) |> 
+                      summarise(Pr_cyto = mean(Pr_cyto)))) +
+  geom_point(aes(median, y=Pr_cyto))  +
+  labs(x="chrom_intensity") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "cyto_intensity_protein")) |>
+         transmute(protein_id = 1:n_prot,
+                   cyto = median) |>
+         inner_join(fit_summary |> 
+                      filter(str_detect(parameter, "chrom_intensity_protein")) |>
+                      transmute(protein_id = 1:n_prot,
+                                chrom = median))|>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id) |> 
+                      summarise(total = mean(total)))) +
+  geom_point(aes(chrom, y=cyto, colour = total)) +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "cyto_intensity_protein_")) |>
+         mutate(protein_id = 1:n_prot) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id) |> 
+                      summarise(Pr_cyto = mean(Pr_cyto)))) +
+  geom_point(aes(median, y=Pr_cyto))  +
+  labs(x="cyto_intensity") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "cyto_intensity_protein")) |>
+         mutate(protein_id = 1:n_prot) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id) |> 
+                      summarise(Pr_nucl = mean(Pr_nucl)))) +
+  geom_point(aes(median, y=Pr_nucl))  +
+  labs(x="cyto_intensity") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "cyto_chrom_intensity_diff")) |>
+         mutate(protein_id = rep(1:n_prot,n_cell_lines),
+                cell_line = rep(1:n_cell_lines,n_prot)) |>
+         inner_join(sam_test_dataset_simple |> 
+                      group_by(protein_id,
+                               cell_line) |> 
+                      summarise(Diff = mean(change_abund)))) +
+  geom_point(aes(median, y=Diff))  +
+  labs(x="Pred Difference") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit_summary |> 
+         filter(str_detect(parameter, "cyto_chrom_intensity_diff")) |>
+         mutate(protein_id = rep(1:n_prot,n_cell_lines),
+                cell_line = rep(1:n_cell_lines,n_prot)) |>
+         inner_join(fit_summary |> 
+         filter(str_detect(parameter, "chrom_intensity_protein")) |>
+         transmute(protein_id = 1:n_prot,
+                   chrom = median))) +
+  geom_point(aes(median, y=chrom))  +
+  labs(x="Pred Difference") +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
+
+ggplot(fit3 |> 
+         extract("gen_prot_intensity") |>
+         as_tibble() |>
+         summarise(gen_prot_intensity=c(apply(gen_prot_intensity,c(2,3),median))) |>
+         mutate(rep = rep(1:n_reps, n_cell_lines * n_prot),
+               cell_line = rep(rep(1:n_cell_lines, each = n_reps), n_prot),
+                protein_id = rep(1:n_prot, each = n_reps * n_cell_lines)) |>
+         inner_join(sam_test_dataset_simple)) +
+  geom_point(aes(x = gen_prot_intensity, y = prot_int, colour = protein_id))  +
+  labs(x="gen_prot_intensity") +
+  theme_bw() +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_equal()
+
+```
+
+```{r explore-priors, eval=FALSE}
+fit_summary |> 
+  filter(str_detect(parameter, "enrichment")) |>
+  pull(median) |>
+  hist()
+
+fit_summary |> 
+  filter(str_detect(parameter, "sigma_total_intensity")) |>
+  pull(median) |>
+  hist()
+
+fit_summary |> 
+  filter(str_detect(parameter, "cyto_intensity_protein")) |>
+  pull(median) |>
+  hist()
+
+fit_summary |> 
+  filter(str_detect(parameter, "chrom_intensity_protein")) |>
+  pull(median) |>
+  hist()
+
+
+```
+
+```{r}
+predicted_ratios <- fit_summary |> 
+  filter(str_detect(parameter, "chrom_intensity_sum")) |>
+  mutate(protein_id = rep(1:n_prot,n_cell_lines),
+         cell_line = rep(1:n_cell_lines,each = n_prot),
+         chrom = median) |>
+  inner_join(fit_summary |> 
+               filter(str_detect(parameter, "cyto_intensity_sum")) |>
+               transmute(protein_id = rep(1:n_prot,n_cell_lines),
+                         cell_line = rep(1:n_cell_lines,each = n_prot),
+                         cyto = median)) |>
+  mutate(ratio = chrom-cyto)
+
+ggplot(predicted_ratios |>
   inner_join(sam_test_dataset_simple |>
                filter(rep == 1) |>
                transmute(protein_id,
                       cell_line,
                       simulated_change = Pr_cyto - Pr_nucl))) +
-  geom_point(aes(x = predicted_change, y= -simulated_change)) +
-  geom_abline(slope = 1, intercept = 0)
-
+  geom_point(aes(x = ratio, y= -simulated_change, colour = cell_line)) +
+  geom_abline(slope = 1, intercept = 0) +
+  coord_equal()
 ```
 
 ```{r run-stanfit, eval=FALSE}

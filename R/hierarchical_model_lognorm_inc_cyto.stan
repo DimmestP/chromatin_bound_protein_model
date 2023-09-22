@@ -17,7 +17,9 @@ parameters {
   
   vector<lower=0>[num_proteins] cyto_intensity_protein;
     
-  vector<lower=0>[num_proteins] cyto_chrom_diff_cell_line[num_cell_lines]; 
+  vector<lower=0>[num_proteins] chrom_cell_line[num_cell_lines]; 
+    
+  vector<lower=0>[num_proteins] cyto_cell_line[num_cell_lines]; 
   }
 
 transformed parameters{
@@ -26,9 +28,9 @@ transformed parameters{
   vector[num_proteins] chrom_intensity_temp;
    
   for(s in 1:num_samples){
-      cyto_intensity_temp = cyto_intensity_protein - cyto_chrom_diff_cell_line[cell_line[s]];
-      chrom_intensity_temp = chrom_intensity_protein + cyto_chrom_diff_cell_line[cell_line[s]];
-    prot_intensity_est[s] = enrichment[s] * chrom_intensity_temp + (1 - enrichment[s]) * cyto_intensity_temp;
+      cyto_intensity_temp = cyto_intensity_protein + cyto_cell_line[cell_line[s]];
+      chrom_intensity_temp = chrom_intensity_protein + chrom_cell_line[cell_line[s]];
+    prot_intensity_est[s] = (1 - enrichment[s]) * chrom_intensity_temp + enrichment[s] * cyto_intensity_temp;
   }
 }
 
@@ -44,7 +46,8 @@ model {
   
   for(c in 1:num_cell_lines){
       
-      cyto_chrom_diff_cell_line[c] ~ lognormal(15, 3);
+      cyto_cell_line[c] ~ lognormal(15, 3);
+      chrom_cell_line[c] ~ lognormal(15, 3);
   }
 
   for(s in 1:num_samples){

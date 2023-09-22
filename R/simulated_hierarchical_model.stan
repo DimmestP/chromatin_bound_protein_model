@@ -1,77 +1,69 @@
 data {
-  int<lower=0> cell_lines; //number of different cell_lines
-  int<lower=0> proteins; //number of proteins 
-  int<lower=0> replicates; //number of replicates
-  int<lower=0> tissues; //number of replicates
-  matrix<lower=0>[cell_lines,proteins] prot_intensity[replicates,tissues]; // array of matricies of protein intensity from MS data per cell line (across replicates)
+  int<lower=1> num_samples; // total of different samples (cell lines * rep)
+  int<lower=1> num_cell_lines; // tnumber of cell lines
+  int<lower=1> num_proteins; //number of proteins 
+  int<lower=1> cell_line[num_samples]; //  which cell line the sample comes from
+  int<lower=1> num_tissue; // number of  tissues
+  int<lower=1> tissue[num_cell_lines]; // which tissue the sample comes from
+  vector<lower=0>[num_proteins] prot_intensity[num_samples]; // array of matricies of protein intensity from MS data per cell line (across replicates)
   }
   
-parameters { 
-  vector<lower=0>[cell_lines] enrichment[replicates,tissues];
+parameters {
+  vector<lower=0,upper=1>[num_samples] enrichment;
   
-  real<lower=0> sigma;
+  real<lower=0> sigma_total_intensity;
   
-  vector[proteins] mu_chrom[tissues];
+  vector<lower=0>[num_proteins] chrom_intensity_protein_base;
   
-  vector<lower=0>[tissues] sigma_chrom;
+  vector<lower=0>[num_proteins] cyto_intensity_protein_base;
   
-  vector<lower=0>[proteins] chrom_intensity_protein;
-    
-  matrix[cell_lines,proteins] chrom_intensity_cell_line[tissues]; 
-  }
+  vector[num_proteins] cyto_chrom_diff_protein[num_cell_lines - 1];
+
+}
 
 transformed parameters{
-  matrix[cell_lines,proteins] prot_intensity_est[replicates,tissues];
-   
-  for(r in 1:replicates){
-    for(c in 1:cell_lines){
-      for(t in 1:tissues){
-        for(p in 1:proteins){
-        prot_intensity_est[r,t,c,p] = enrichment[r,t,c] * (chrom_intensity_cell_line[t,c,p] + chrom_intensity_protein[p]);
-        }
-      }
+  vector[num_proteins] chrom_intensity_sum[num_cell_lines];
+  vector[num_proteins] cyto_intensity_sum[num_cell_lines];
+  
+  for(c in 1:num_cell_lines){
+    if(c == num_cell_lines){
+      chrom_intensity_sum[c] = chrom_intensity_protein_base;
+      cyto_intensity_sum[c] =  cyto_intensity_protein_base;
+    }
+    else{
+      chrom_intensity_sum[c] = chrom_intensity_protein_base + cyto_chrom_diff_protein[c];
+      cyto_intensity_sum[c] =  cyto_intensity_protein_base - cyto_chrom_diff_protein[c];
     }
   }
 }
 
-
 model {
+  sigma_total_intensity ~ normal(1,0.5);
   
-  sigma ~ gamma(2,2);
-  sigma_chrom ~ gamma(2,2);
-  
-  chrom_intensity_protein ~ normal(15,2);
-  
-  for(t in 1:tissues){
-  mu_chrom[t] ~ normal(0,4); 
-    
-    for(p in 1:proteins){
-      
-      chrom_intensity_cell_line[t,,p] ~ normal(mu_chrom[t,p], sigma_chrom[t]);
-    }
+  for(c in 1:(num_cell_lines - 1)){
+    cyto_chrom_diff_protein[c] ~ normal(0,3);
   }
-
-  for(r in 1:replicates){
-    for(t in 1:tissues){
-      enrichment[r,t] ~ normal(1, 0.3);
-
-      for(p in 1:proteins){ 
-        // generally discouraged to have complex maths in call to sample from distribution
-        prot_intensity[r,t,,p] ~ normal(prot_intensity_est[r,t,,p], sigma);
-      }
+  
+  chrom_intensity_protein_base ~ normal(8,2);
+  cyto_intensity_protein_base ~ normal(10,2);
+  
+  enrichment ~ normal(0.5,0.1);
+  
+  for (p in 1:num_proteins){
+    for(s in 1:num_samples){
+      target += log_sum_exp(log(enrichment[s]) + normal_lpdf( prot_intensity[s,p] | chrom_intensity_sum[cell_line[s],p], sigma_total_intensity), 
+      log(1 - enrichment[s]) + normal_lpdf( prot_intensity[s,p] | cyto_intensity_sum[cell_line[s],p], sigma_total_intensity));
     }
   }
 } 
 
 generated quantities {
-  real gen_prot_intensity[replicates, tissues, cell_lines, proteins];
+  real gen_prot_intensity[num_samples, num_proteins];
   
-  for(r in 1:replicates){
-    for(p in 1:proteins){ 
-      for(t in 1:tissues){
-        // generally discouraged to have complex maths in call to sample from distribution
-        gen_prot_intensity[r,t,,p] = normal_rng(prot_intensity_est[r,t,,p], sigma);
-      }
+  for (p in 1:num_proteins){
+    for(s in 1:num_samples){
+      gen_prot_intensity[s,p] =  enrichment[s] * normal_rng(chrom_intensity_sum[cell_line[s],p], sigma_total_intensity) + 
+       (1 - enrichment[s]) * normal_rng( cyto_intensity_sum[cell_line[s],p], sigma_total_intensity);
     }
   }
 }

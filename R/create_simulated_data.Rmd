@@ -189,16 +189,14 @@ ggplot(protein_intensities_comparison_sam) +
 ```
 
 ```{r create-simple-simulated-dataset}
-n_prot = 20 
-n_cell_lines = 50
-n_reps = 2
+n_prot = 50 
+n_cell_lines = 20
+n_reps = 3
 n_samples = n_cell_lines * n_reps
 
 protein_abundance_simple <- tibble(protein_id = 1:n_prot,
                                total = rnorm(n_prot,20,1),
-                               chromatin = runif(n_prot,
-                                                        min = 5,
-                                                        max = 16),
+                               chromatin = rbeta(n_prot,2,6) * 15 + 3,
                                cyto = total - chromatin)
 
 # Feel free to critique this but instead of hand picking some proteins in some cell lines I've just said all proteins have some sort of bias in every cell line. Most are negligible though! 
@@ -207,7 +205,7 @@ protein_cell_line_preference_simple <- tibble(protein_id = rep(1:n_prot,
                                                         each = n_cell_lines),
                                        cell_line = rep(1:n_cell_lines, 
                                                       n_prot),
-                                       change_abund = rnorm(n_prot*n_cell_lines, 0, 1))
+                                       change_abund = rnorm(n_prot*n_cell_lines, 0, 2))
 
 # I think there should be a slight bias towards efficient enrichment
 
@@ -232,10 +230,10 @@ sam_test_dataset_simple <- tibble(protein_id = rep(1:n_prot,
   mutate(
     Pr_nucl = rnorm(1,
                      mean = chromatin + change_abund,
-                     sd = 1),
+                     sd = 0.1),
     Pr_cyto = rnorm(1,
                     mean= cyto - change_abund,
-                    sd = 1),
+                    sd = 0.1),
     prot_int = Pr_cyto * (1-enrichment) + Pr_nucl * enrichment
   )
 ```
