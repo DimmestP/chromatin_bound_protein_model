@@ -30,21 +30,38 @@ options(mc.cores = 4)
 ```
 
 ```{r run-stan-model-simulated}
-input_enrichment = sam_test_dataset_simple |>
-  group_by(cell_line)|>
-  arrange(cell_line) |>
-  summarise(enrichment = enrichment[1] * 2.8 + 3) |>
-  pull(enrichment) |>
-  array(dim = c(n_reps, n_cell_lines))
 
-#in my actual experiment i don't have the true percentages, which I need to estimate
-# so I'm taking the true percentages and transforming the so that the model needs to find the original percentages of the simulation
-matrix_input = sam_test_dataset_simple |>
+sam_test_dataset_simple_partial_data <- sam_test_dataset_simple |>
+  sample_frac(0.99)
+
+sam_test_dataset_simple_missing_data <- sam_test_dataset_simple |>
+  filter(!str_c(protein_id,rep,cell_line, sep = "_") %in%
+           str_c(sam_test_dataset_simple_partial_data$protein_id,
+                 sam_test_dataset_simple_partial_data$rep,
+                 sam_test_dataset_simple_partial_data$cell_line, sep = "_"))
+ 
+matrix_input = sam_test_dataset_simple_partial_data |>
+  bind_rows(sam_test_dataset_simple_missing_data |>
+              mutate(prot_int = 0)) |>
   arrange(cell_line, rep, protein_id) |>
   pull(prot_int) |>
   array(dim = c(n_prot,
                 n_reps*n_cell_lines)) |>
   aperm(c(2,1))
+
+N_missing = nrow(sam_test_dataset_simple_missing_data)
+
+sam_test_dataset_simple_missing_n_cell_line <- sam_test_dataset_simple_partial_data |>
+  bind_rows(sam_test_dataset_simple_missing_data |>
+              mutate(prot_int = NA)) |>
+  arrange(cell_line, rep, protein_id) |> 
+  group_by(cell_line,rep) |>
+  summarise(n=sum(is.na(prot_int))) |>
+  pull(n)
+
+sam_test_dataset_simple_missing_positions <- sam_test_dataset_simple_missing_data |>
+  arrange(cell_line, rep, protein_id) |>
+  pull(protein_id)
   
 fit3 <- sampling(model_orig, list(num_cell_lines = n_cell_lines,
                                   num_samples = n_reps*n_cell_lines,
@@ -52,12 +69,27 @@ fit3 <- sampling(model_orig, list(num_cell_lines = n_cell_lines,
                                   cell_line = rep(1:n_cell_lines, each = n_reps),
                                   num_tissue = n_tissue,
                                   tissue = rep(1, n_cell_lines),
-                                  prot_intensity = matrix_input), 
+                                  prot_intensity_obs = matrix_input,
+                                  N_mis_sample = sam_test_dataset_simple_missing_n_cell_line,
+                                  ii_mis = sam_test_dataset_simple_missing_positions,
+                                  N_mis = N_missing), 
                  iter = 2000, chains = 4
                  # , init = init_fun
 )
 
 # save(fit3, file=here("data/output/simulated_data_model_result"))
+```
+
+```{r check-input-missing-values, eval=FALSE}
+x=0
+for(s in 1:length(sam_test_dataset_simple_missing_n_cell_line)){
+  if(sam_test_dataset_simple_missing_n_cell_line[s] > 0){
+    x = x + sam_test_dataset_simple_missing_n_cell_line[s]
+    print(matrix_input[s, sam_test_dataset_simple_missing_positions[x]])
+    print(s)
+    print(x)
+  }
+}
 ```
 
 ```{r explore-posterior-cell-line, eval=TRUE}
@@ -89,7 +121,7 @@ ggplot(fit_summary |>
                                cell_line) |> 
                       summarise(Pr_chrom = mean(change_abund)))) +
   geom_point(aes(median, y=Pr_chrom))  +
-  labs(x="chrom_intensity") +
+  labs(x="Cyto Vs Chrom Diff") +
   geom_abline(slope = 1, intercept = 0) +
   coord_equal()
 
@@ -149,6 +181,29 @@ ggplot(fit_summary |>
   geom_abline(slope = 1, intercept = 0)+
   coord_equal()
 
+```
+
+```{r explore-missing-value-posterior}
+missing_proteins_cell_lines <- sam_test_dataset_simple_missing_data |>
+  transmute(missing_proteins = str_c(protein_id,cell_line,sep="_"))
+
+posterior_missing_data <- sam_test_dataset_simple_missing_data |> 
+  mutate(inferred_median = fit_summary |> 
+           filter(str_detect(parameter, "prot_intensity_mis\\[")) |> 
+           pull(median))
+
+missing_value_posterior <- sam_test_dataset_simple |>
+  filter(str_c(protein_id,cell_line,sep="_") %in% missing_proteins_cell_lines$missing_proteins) |>
+  inner_join(posterior_missing_data |>
+               dplyr::rename(rep_post = rep),
+             by = c("protein_id", "cell_line"))
+
+ggplot(missing_value_posterior |>
+         filter(rep != rep_post)) +
+  geom_point(aes(x=inferred_median,y=prot_int.x, colour = factor(rep))) +
+  theme_bw() +
+  coord_equal() +
+  geom_abline(intercept = 0, slope = 1)
 ```
 
 ```{r explore-posterior-no-cell-line, eval=FALSE}

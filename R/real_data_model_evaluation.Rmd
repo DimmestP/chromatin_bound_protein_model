@@ -12,7 +12,7 @@ library(tidybayes)
 library(rstan)
 library(shinystan)
 
-perfect_real_data_set <- read_rds(here("data/output/perfect_real_data_set.rds"))
+perfect_real_data_set <- read_rds(here("data/output/missing_data_real_data_set.rds"))
 
 test_enrichment <- read_csv(here("data/input/enrichment_plot_rep_sum_piv.csv")) |>
   arrange(desc(N)) |>
@@ -22,7 +22,7 @@ test_enrichment <- read_csv(here("data/input/enrichment_plot_rep_sum_piv.csv")) 
          cell_line_name = factor(cell_line_name))
 
 #check stan is installed
-model_orig <-  stan_model(here('R/simulated_hierarchical_model.stan'))
+model_orig <-  stan_model(here('R/hierarchical_model_lognorm_inc_cyto.stan'))
 
 # pass data to stan and run model
 options(mc.cores = 4)
@@ -31,7 +31,7 @@ options(mc.cores = 4)
 ```{r normalise-raw-intensities-DESeq}
 gene_wise_pseudo_ref <- perfect_real_data_set |>
   group_by(ProteinGroup) |>
-  summarise(pseudo_ref = exp(sum(log(prot_intensity))/length(prot_intensity)))
+  summarise(pseudo_ref = exp(sum(log(prot_intensity), na.rm = TRUE)/length(prot_intensity)))
 
 sample_wise_scale_factors <- perfect_real_data_set |>
   inner_join(gene_wise_pseudo_ref) |>
@@ -57,9 +57,9 @@ ggplot(perfect_real_data_set_normalised) +
 ```
 
 ```{r run-stan-model-real}
-n_prot <- 50
+n_prot <- 100
 
-n_tissues <- 3
+n_tissues <- 5
 
 subset_perfect_protein_names <- perfect_real_data_set_normalised |> 
   pull(ProteinGroup) |>
@@ -74,11 +74,12 @@ subset_perfect_tissue_names <- perfect_real_data_set_normalised |>
 subset_perfect_data <- perfect_real_data_set_normalised |> 
   filter(ProteinGroup %in% subset_perfect_protein_names,
          tissue_name %in% subset_perfect_tissue_names) |>
-  mutate(tissue_name = factor(tissue_name),
+  mutate(ProteinGroup = factor(ProteinGroup),
+         protein_id =  unclass(ProteinGroup),
+         tissue_name = factor(tissue_name),
          tissue =  unclass(tissue_name),
          cell_line_name = factor(cell_line_name),
-         cell_line = unclass(cell_line_name),
-         prot_intensity = ifelse(prot_intensity==0,1,prot_intensity))
+         cell_line = unclass(cell_line_name))
 
 n_cell_lines = length(unique(subset_perfect_data$cell_line_name))
 
@@ -95,10 +96,29 @@ arranged_subset_perfect_data = subset_perfect_data |>
           ProteinGroup)
 
 protein_intensity_array_real_data <- array(c(arranged_subset_perfect_data |>
-  pull(prot_intensity) |> log()),
+  mutate(prot_intensity = ifelse(is.na(prot_intensity)|prot_intensity==0,
+                                 1,
+                                 prot_intensity)) |>
+    pull(prot_intensity) |> 
+    log()),
   dim = c(n_prot,
           n_sample)) |>
   aperm(c(2,1))
+
+subset_perfect_data_missing_data <- subset_perfect_data |>
+  filter(is.na(prot_intensity))
+
+N_missing = nrow(subset_perfect_data_missing_data)
+
+subset_perfect_data_missing_n_cell_line <- subset_perfect_data |>
+  arrange(cell_line, rep, protein_id) |> 
+  group_by(cell_line,rep) |>
+  summarise(n=sum(is.na(prot_intensity))) |>
+  pull(n)
+  
+subset_perfect_data_missing_positions <- subset_perfect_data_missing_data |>
+  arrange(cell_line, rep, protein_id) |>
+  pull(protein_id)
 
 fit_real <- sampling(model_orig,
                      list(num_samples = n_sample,
@@ -113,7 +133,10 @@ fit_real <- sampling(model_orig,
                             filter(protein_id == protein_id[1],
                                    rep == 1) |> 
                             pull(tissue),
-                          prot_intensity = protein_intensity_array_real_data),
+                          prot_intensity_obs = protein_intensity_array_real_data,
+                          N_mis_sample = subset_perfect_data_missing_n_cell_line,
+                          ii_mis = subset_perfect_data_missing_positions,
+                          N_mis = N_missing),
                      iter = 1000,
                      thin = 10,
                      chains = 4)
@@ -255,6 +278,7 @@ ggplot(compare_localisation |> filter(cell_line == 5)) +
         axis.title.x = element_blank(),
         panel.grid.minor.y = element_blank())
 ```
+
 ```{r explore_hyperparameters}
 sigma_samples<- spread_draws(fit_real, sigma)
 
