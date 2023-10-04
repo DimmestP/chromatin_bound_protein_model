@@ -59,7 +59,7 @@ ggplot(perfect_real_data_set_normalised) +
 ```{r run-stan-model-real}
 n_prot <- 100
 
-n_tissues <- 5
+n_tissues <- 6
 
 subset_perfect_protein_names <- perfect_real_data_set_normalised |> 
   pull(ProteinGroup) |>
@@ -189,23 +189,30 @@ enrichment_comparison <- subset_perfect_data_sorted |>
   
 named_protein_results <- protein_dictionary |> 
   inner_join(fit_real |> 
-  spread_draws(cyto_intensity_sum[cell_line,protein_id]) |>
-  summarise_draws()) |>
-  inner_join(cell_line_dictionary |> 
-               filter(tissue %in% 1:3))
+  spread_draws(cyto_intensity_protein_base[tissue,protein_id]) |>
+  summarise_draws()) 
 
 ggplot(named_protein_results) + 
-  geom_point(aes(x=ProteinGroup, y=log(median))) + 
-  facet_wrap(~cell_line_name)
+  geom_point(aes(x=ProteinGroup, y=log(median)))
 
  base_protein_results <- protein_dictionary |> 
   inner_join(fit_real |> 
-  spread_draws(cyto_intensity_protein_base[protein_id],
-               chrom_intensity_protein_base[protein_id]) |>
-  summarise_draws())
+  spread_draws(cyto_intensity_protein_base[tissue,protein_id]) |>
+    summarise_draws()) |>
+   transmute(cyto_intensity_protein_base = median,
+             protein_id,
+             ProteinGroup,
+             tissue) |>
+    inner_join(fit_real |> 
+  spread_draws(chrom_intensity_protein_base[protein_id]) |>
+   summarise_draws()|>
+   transmute(chrom_intensity_protein_base = median,
+             protein_id))
  
-ggplot(base_protein_results) + 
-  geom_point(aes(x=ProteinGroup, y=log(median), colour = variable))
+ggplot(base_protein_results |>
+         pivot_longer(cols = c("chrom_intensity_protein_base", "cyto_intensity_protein_base"))) + 
+  geom_point(aes(x=ProteinGroup, y=value, colour = name)) +
+  facet_wrap(~tissue)
 
 ggplot(test_enrichment) +
   geom_point(aes(x= C, y=N))
@@ -228,6 +235,22 @@ ggplot( tibble(gen_prot_intensity=c(apply(extract(fit_real,"gen_prot_intensity")
   labs(x="gen_prot_intensity") +
   theme_bw() +
   geom_abline(slope = 1, intercept = 0)
+
+ggplot(fit_summary_real |> 
+         filter(str_detect(parameter, "chrom_intensity_sum\\[")) |>
+         mutate(protein_id = rep(1:n_prot,n_cell_lines),
+                cell_line = rep(1:n_cell_lines,each = n_prot),
+                                chrom = median) |>
+         inner_join(cell_line_dictionary) |>
+         inner_join(fit_summary_real |> 
+                      filter(str_detect(parameter, "cyto_intensity_protein_base")) |>
+                      transmute(protein_id = rep(1:n_prot, n_tissues),
+                                tissue = rep(1:n_tissues, each = n_prot),
+                                cyto = median)) |>
+         filter(protein_id < 100)) +
+  geom_point(aes(chrom, y=cyto, colour = factor(protein_id)))  +
+  geom_abline(slope = 1, intercept = 0)+
+  coord_equal()
 ```
 
 ```{r compare-to-hyperlopit}
@@ -236,47 +259,77 @@ protein_localisation_dataset <- read_tsv(here("data/input/annot_hyperlopit.tsv")
 
 compare_localisation <- protein_dictionary |> 
   inner_join(fit_real |> 
-  spread_draws(chrom_intensity_sum[cell_line,protein_id],
-               cyto_intensity_sum[cell_line,protein_id]) |>
-  summarise_draws()) |> 
+  spread_draws(chrom_intensity_sum[cell_line,protein_id]) |>
+  summarise_draws()|>
+  transmute(cell_line,
+            protein_id,
+            chrom_intensity_sum = median)) |>
+         inner_join(cell_line_dictionary) |>  
+  inner_join(fit_real |> 
+  spread_draws(cyto_intensity_protein_base[protein_id, tissue]) |>
+  summarise_draws() |>
+  transmute(protein_id,
+            tissue,
+            cyto_intensity_protein_base = median)) |> 
   mutate(Uniprot = ifelse(str_detect(ProteinGroup, ";"),
                                str_extract(ProteinGroup, "[A-Z0-9-]+(?=;)"),
                                as.character(ProteinGroup))) |>
   inner_join(protein_localisation_dataset) |>
   transmute(Uniprot,
-            is.cyto = median > 1,
             final.assignment,
-            median,
+            cyto_intensity_protein_base,
             cell_line,
-            variable) |>
+            tissue,
+            chrom_intensity_sum) |>
   group_by(Uniprot,
             cell_line) |>
-  summarise(variable = variable[1:2],
+  summarise(cyto_intensity_protein_base = cyto_intensity_protein_base[1:2],
             final.assignment = final.assignment[1:2],
-            median = median[1:2]) |>
-  pivot_wider(names_from = variable,
-              values_from = median)
+            chrom_intensity_sum = chrom_intensity_sum[1:2])
 
-ggplot(compare_localisation |> filter(cell_line == 5)) +
-  geom_boxplot(aes(x = final.assignment, y=cyto_intensity_sum)) +
+compare_localisation_global <- protein_dictionary |> 
+  inner_join(fit_real |> 
+  spread_draws(chrom_intensity_protein_base[protein_id]) |>
+  summarise_draws() |>
+    transmute(protein_id,
+              chrom_intensity_protein_base = median)) |> 
+  inner_join(fit_real |> 
+               spread_draws(cyto_intensity_protein_base[tissue,protein_id])|>
+  summarise_draws() |>
+    transmute(protein_id,
+              tissue,
+              cyto_intensity_protein_base = median)) |>
+  mutate(Uniprot = ifelse(str_detect(ProteinGroup, ";"),
+                               str_extract(ProteinGroup, "[A-Z0-9-]+(?=;)"),
+                               as.character(ProteinGroup))) |>
+  inner_join(protein_localisation_dataset) |>
+  transmute(Uniprot,
+            tissue,
+            final.assignment,
+            cyto_intensity_protein_base,
+            chrom_intensity_protein_base) |>
+  group_by(Uniprot) |>
+  summarise(cyto_intensity_protein_base = cyto_intensity_protein_base[1:n_tissues],
+            final.assignment = final.assignment[1:n_tissues],
+            chrom_intensity_protein_base = chrom_intensity_protein_base[1:n_tissues],
+            tissue = tissue[1:n_tissues])
+
+ggplot(compare_localisation_global) +
+  geom_boxplot(aes(x = final.assignment, y=chrom_intensity_protein_base - cyto_intensity_protein_base)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90),
         axis.title.x = element_blank(),
-        panel.grid.minor.y = element_blank())
+        panel.grid.minor.y = element_blank()) +
+  facet_wrap(~tissue)
 
-ggplot(compare_localisation |> filter(cell_line == 5)) +
-  geom_boxplot(aes(x = final.assignment, y=chrom_intensity_sum-cyto_intensity_sum)) +
+ggplot(compare_localisation |>
+         filter(cell_line %in% 1:6)) +
+  geom_boxplot(aes(x = final.assignment, y=chrom_intensity_sum - cyto_intensity_protein_base)) +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90),
         axis.title.x = element_blank(),
-        panel.grid.minor.y = element_blank())
-
-ggplot(compare_localisation |> filter(cell_line == 5)) +
-  geom_boxplot(aes(x = final.assignment, y=chrom_intensity_sum)) +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 90),
-        axis.title.x = element_blank(),
-        panel.grid.minor.y = element_blank())
+        panel.grid.minor.y = element_blank()) +
+  facet_wrap(~cell_line)
 ```
 
 ```{r explore_hyperparameters}
@@ -348,6 +401,15 @@ ggplot(mu_cyto_sample |>
 
 ```{r run-stanfit, eval=FALSE}
 launch_shinystan(fit_real)
+```
+
+```{r}
+ggplot(fit_real |>
+  spread_draws(chrom_intensity_sum[cell_line,protein_id]) |>
+  filter(protein_id == 3) |>
+  inner_join(fit_real |>
+  spread_draws(cyto_intensity_sum[cell_line,protein_id]))) +
+  geom_point(aes(x=chrom_intensity_sum,y=cyto_intensity_sum,colour=factor(cell_line)))
 ```
 
 ```{r calc_nuc_frac, eval=FALSE}

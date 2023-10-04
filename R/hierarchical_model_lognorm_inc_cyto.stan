@@ -20,33 +20,25 @@ parameters {
   
   real<lower=0> sigma_total_intensity;
   
-  real<lower=0> prot_intensity_mis_mean;
-  
-  real<lower=0> prot_intensity_mis_sigma;
-  
-  vector<lower=0>[num_proteins] chrom_intensity_protein_base;
+  vector<lower=0>[num_proteins] chrom_intensity_protein_base[num_tissue];
   
   vector[num_proteins] total_intensity_protein_cell_line[num_cell_lines - 1];
   
-  vector<lower=0>[num_proteins] cyto_intensity_protein_base;
-  
-  vector[num_proteins] cyto_chrom_diff_protein[num_cell_lines - 1];
+  vector<lower=0>[num_proteins] cyto_intensity_protein_base[num_tissue];
 
 }
 
 transformed parameters {
   vector[num_proteins] chrom_intensity_sum[num_cell_lines];
-  vector[num_proteins] cyto_intensity_sum[num_cell_lines];
   
   for(c in 1:num_cell_lines){
+    int cur_tissue = tissue[c];
     if(c == num_cell_lines){
-      chrom_intensity_sum[c] = chrom_intensity_protein_base;
-      cyto_intensity_sum[c] =  cyto_intensity_protein_base;
+      chrom_intensity_sum[c] = chrom_intensity_protein_base[cur_tissue];
     }
     else{
-      chrom_intensity_sum[c] = chrom_intensity_protein_base + total_intensity_protein_cell_line[c] + cyto_chrom_diff_protein[c];
-      cyto_intensity_sum[c] =  cyto_intensity_protein_base + total_intensity_protein_cell_line[c] - cyto_chrom_diff_protein[c];
-    }
+      chrom_intensity_sum[c] = chrom_intensity_protein_base[cur_tissue] + total_intensity_protein_cell_line[c];
+      }
   }
 }
 
@@ -63,6 +55,11 @@ model {
   
   for(s in 1:num_samples){
     if (N_mis_sample[s] > 0){ 
+      int cur_cell_line = cell_line[s];
+      int cur_tissue = tissue[cur_cell_line];
+      for(p in 1:N_mis_sample[s]){
+        prot_intensity_mis[pos_start+p-1] ~ normal(log_sum_exp(chrom_intensity_protein_base[cur_tissue,ii_mis[(pos_start+p-1)]],cyto_intensity_protein_base[cur_tissue,ii_mis[(pos_start+p-1)]]),0.2);
+      }
       temp_prot_intensity_comb = prot_intensity_comb[s,];
       
       temp_prot_intensity_comb[ii_mis[pos_start:(pos_start+N_mis_sample[s]-1)]] = prot_intensity_mis[pos_start:(pos_start+N_mis_sample[s]-1)];
@@ -73,28 +70,24 @@ model {
     }
   }
   
-  prot_intensity_mis_mean ~ normal(15,1);
-  
-  prot_intensity_mis_sigma ~ normal(2,2);
-  
-  prot_intensity_mis ~ normal(prot_intensity_mis_mean, prot_intensity_mis_sigma);
-  
   sigma_total_intensity ~ normal(1,0.5);
   
   for(c in 1:(num_cell_lines - 1)){
-    cyto_chrom_diff_protein[c] ~ normal(0,3);
-    total_intensity_protein_cell_line[c] ~ normal(0,1);
+    total_intensity_protein_cell_line[c] ~ normal(0,0.5);
   }
   
-  chrom_intensity_protein_base ~ normal(15,2);
-  cyto_intensity_protein_base ~ normal(18,2);
+  for(t in 1:num_tissue){
+    cyto_intensity_protein_base[t] ~ normal(17,3);
+    chrom_intensity_protein_base[t] ~ normal(15,3);
+  }
   
-  enrichment ~ normal(0.7,0.1);
+  enrichment ~ normal(0.6,0.1);
   
   for (p in 1:num_proteins){
     for(s in 1:num_samples){
+      int cur_cell_line = cell_line[s];
       target += log_sum_exp(log(enrichment[s]) + normal_lpdf( prot_intensity_comb[s,p] | chrom_intensity_sum[cell_line[s],p], sigma_total_intensity), 
-      log(1 - enrichment[s]) + normal_lpdf( prot_intensity_comb[s,p] | cyto_intensity_sum[cell_line[s],p], sigma_total_intensity));
+      log(1 - enrichment[s]) + normal_lpdf( prot_intensity_comb[s,p] | cyto_intensity_protein_base[tissue[cur_cell_line],p], sigma_total_intensity));
     }
   }
 } 
@@ -105,8 +98,9 @@ generated quantities {
   
   for (p in 1:num_proteins){
     for(s in 1:num_samples){
+      int cur_cell_line = cell_line[s];
       gen_prot_intensity[s,p] =  enrichment[s] * normal_rng(chrom_intensity_sum[cell_line[s],p], sigma_total_intensity) + 
-       (1 - enrichment[s]) * normal_rng( cyto_intensity_sum[cell_line[s],p], sigma_total_intensity);
+       (1 - enrichment[s]) * normal_rng( cyto_intensity_protein_base[tissue[cur_cell_line],p], sigma_total_intensity);
     }
   }
 }

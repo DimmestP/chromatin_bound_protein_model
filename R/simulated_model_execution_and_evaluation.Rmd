@@ -23,7 +23,7 @@ n_tissue <- 1
 n_cell_lines <-  sam_test_dataset_simple$cell_line |> max()
 
 #check stan is installed
-model_orig <-  stan_model(here('R/simulated_hierarchical_model.stan'))
+model_orig <-  stan_model(here('R/hierarchical_model_lognorm_inc_cyto.stan'))
 
 # pass data to stan and run model
 options(mc.cores = 4)
@@ -194,13 +194,14 @@ posterior_missing_data <- sam_test_dataset_simple_missing_data |>
 
 missing_value_posterior <- sam_test_dataset_simple |>
   filter(str_c(protein_id,cell_line,sep="_") %in% missing_proteins_cell_lines$missing_proteins) |>
+  group_by(protein_id, cell_line) |>
+  summarise(prot_int = mean(prot_int)) |>
   inner_join(posterior_missing_data |>
                dplyr::rename(rep_post = rep),
              by = c("protein_id", "cell_line"))
 
-ggplot(missing_value_posterior |>
-         filter(rep != rep_post)) +
-  geom_point(aes(x=inferred_median,y=prot_int.x, colour = factor(rep))) +
+ggplot(missing_value_posterior) +
+  geom_point(aes(x=inferred_median,y=prot_int.x)) +
   theme_bw() +
   coord_equal() +
   geom_abline(intercept = 0, slope = 1)
