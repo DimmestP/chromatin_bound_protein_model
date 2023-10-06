@@ -11,6 +11,8 @@ data {
 parameters {
   
   vector<lower=0,upper=1>[num_samples] enrichment;
+
+  real<lower=0,upper=1> on_off_chrom_mix[num_proteins];
   
   real<lower=0> sigma_total_intensity;
   
@@ -35,15 +37,18 @@ transformed parameters {
 model {
   sigma_total_intensity ~ normal(1,0.5);
   
-  for(c in 1:(num_cell_lines)){
-    cyto_chrom_ratio[c] ~ normal(0.6,0.2);
+  for(c in 1:num_cell_lines){
+    for(p in 1:num_proteins){
+       target += log_sum_exp( log(on_off_chrom_mix[p]) + normal_lpdf(cyto_chrom_ratio[c,p] | 0.7,0.1), 
+       log(1 - on_off_chrom_mix[p]) + normal_lpdf(cyto_chrom_ratio[c,p] | 0.3,0.1));
+    }
   }
   
   for(t in 1:num_tissue){
     total_intensity_protein_base[t] ~ normal(17,2);
   }
   
-  enrichment ~ normal(0.7,0.1);
+  enrichment ~ normal(0.6,0.1);
   
   for (p in 1:num_proteins){
     for(s in 1:num_samples){

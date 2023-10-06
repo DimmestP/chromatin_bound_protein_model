@@ -262,8 +262,7 @@ ggplot(compare_localisation |>
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90),
         axis.title.x = element_blank(),
-        panel.grid.minor.y = element_blank()) +
-  facet_wrap(~cell_line)
+        panel.grid.minor.y = element_blank())
 ```
 
 ```{r explore_hyperparameters}
